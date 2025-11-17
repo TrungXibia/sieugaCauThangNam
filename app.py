@@ -24,22 +24,30 @@ def _get_month_url():
 def _get_year_url():
     return 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauNam5So.aspx'
     
+# SỬA LỖI 1: Sửa lại hàm clean_df để không làm hỏng cột 'Ngày'
 def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    def fmt(v):
-        s = str(v).strip()
-        if not s or s == '-----': return ''
-        if s.endswith('.0'): s = s[:-2]
-        try:
-            int(s)
+    cleaned_cols = {}
+    for col_name in df.columns:
+        # Giữ nguyên cột 'Ngày'
+        if 'ngày' in str(col_name).lower():
+            cleaned_cols[col_name] = df[col_name].astype(str).str.replace('.0', '', regex=False)
+            continue
+        
+        # Xử lý các cột còn lại
+        def fmt(v):
+            s = str(v).strip()
+            if not s or s == '-----': return ''
+            if s.endswith('.0'): s = s[:-2]
             return s.zfill(5)
-        except (ValueError, TypeError):
-            return s
+            
+        cleaned_cols[col_name] = df[col_name].map(fmt)
 
-    df = df.apply(lambda col: col.map(fmt))
-    if 'Ngày.1' in df.columns: df = df.rename(columns={'Ngày.1': 'Ngày'})
-    if not df.columns[0].startswith('TH') and df.columns[0] != 'Ngày':
-         df = df.rename(columns={df.columns[0]: 'Ngày'})
-    return df
+    # Đổi tên cột nếu cần
+    new_df = pd.DataFrame(cleaned_cols)
+    if 'Ngày.1' in new_df.columns: new_df = new_df.rename(columns={'Ngày.1': 'Ngày'})
+    
+    return new_df
+
 
 def fetch_data_from_source(fetch_type='month'):
     try:
@@ -113,9 +121,6 @@ def api_run_analysis():
     exact_match = data.get('exact_match', False)
     selected_month_col = data.get('month_col')
     
-    # ... (Toàn bộ logic phân tích cầu được sao chép và dán vào đây) ...
-    # (Do logic này dài và không thay đổi, tôi sẽ tóm tắt, bạn chỉ cần copy từ file app.py cũ)
-    
     patterns = []
     pattern_months = set()
     
@@ -146,9 +151,12 @@ def api_run_analysis():
                 pattern_months.add(p_col)
             patterns.append(pat[-2:] if isinstance(pat, str) and len(pat) >= 2 else '')
             cur_day, cur_col = (p_day, p_col)
-    else:
+    else: # Dữ liệu tháng
         year_col = str(datetime.now().year)
-        if year_col not in df.columns and len(df.columns) > 1: year_col = df.columns[1]
+        if year_col not in df.columns and len(df.columns) > 1:
+             # Tìm cột cuối cùng, đó thường là năm hiện tại
+             year_col = df.columns[-1]
+
         for offset in range(1, num_patterns + 1):
             idx = row_idx - offset
             pat = df.iloc[idx][year_col] if idx >= 0 else ''
@@ -164,10 +172,16 @@ def api_run_analysis():
     all_results, cau_positions, predict_positions = [], set(), set()
     dan_so_sets = [[] for _ in range(12)]
     cols_full = list(df.columns)
-    cols_to_scan = [c for c in cols_full if c not in ['Ngày'] and c not in pattern_months]
     
-    if is_year_data and selected_month_col in cols_to_scan: cols_to_scan.remove(selected_month_col)
-    elif not is_year_data: cols_to_scan = []
+    # SỬA LỖI 2: Sửa lại logic chọn cột để quét cho cả dữ liệu Tháng và Năm
+    cols_to_scan = []
+    if is_year_data:
+        # Với dữ liệu NĂM, quét các tháng khác tháng lấy mẫu
+        cols_to_scan = [c for c in cols_full if c.startswith('TH') and c not in pattern_months and c != selected_month_col]
+    else:
+        # Với dữ liệu THÁNG, quét các cột năm cũ
+        current_year_col = df.columns[-1]
+        cols_to_scan = [c for c in cols_full if c.isdigit() and c != current_year_col]
 
     for dir_idx, inside in enumerate([True, False]):
         direction_label = "Từ trên xuống" if inside else "Từ dưới lên"
@@ -200,6 +214,7 @@ def api_run_analysis():
             if result_nums: result_text += f"<br><i>Giá trị:</i> {','.join(result_nums)}"
             else: result_text += "<br><i>Giá trị:</i> Không tìm thấy cầu"
             all_results.append(result_text)
+            
     return jsonify({
         'success': True, 'patterns': patterns, 'stats_html': '<hr>'.join(all_results),
         'cau_positions': [json.loads(p) for p in cau_positions],
