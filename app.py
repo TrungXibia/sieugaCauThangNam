@@ -6,19 +6,16 @@ from collections import Counter
 from datetime import datetime
 from io import StringIO
 import json
-
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
-
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-def _get_month_url():
-    return 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauThang5So.aspx'
-def _get_year_url():
-    return 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauNam5So.aspx'
+def _get_month_url(): return 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauThang5So.aspx'
+def _get_year_url(): return 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauNam5So.aspx'
+
 def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     cleaned_cols = {}
     for col_name in df.columns:
@@ -44,9 +41,8 @@ def fetch_data_from_source(fetch_type='month'):
         r1.raise_for_status()
         soup = BeautifulSoup(r1.text, 'lxml')
         payload = {inp['name']: inp.get('value', '') for inp in soup.find_all('input', {'type': 'hidden'})}
-        y = str(datetime.now().year)
+        y, m = str(datetime.now().year), str(datetime.now().month)
         if fetch_type == 'month':
-            m = str(datetime.now().month)
             payload.update({'ctl00$ContentPlaceHolder1$ddlThang': m, 'ctl00$ContentPlaceHolder1$ddlNam': y, 'ctl00$ContentPlaceHolder1$btnXem': 'Xem'})
         else:
             payload.update({'ctl00$ContentPlaceHolder1$ddlNam': y, 'ctl00$ContentPlaceHolder1$btnXem': 'Xem'})
@@ -62,8 +58,7 @@ def fetch_data_from_source(fetch_type='month'):
         return None
 
 @app.route('/')
-def home():
-    return "Backend API is running."
+def home(): return "Backend API is running."
 
 @app.route('/fetch_data', methods=['POST'])
 def api_fetch_data():
@@ -72,7 +67,7 @@ def api_fetch_data():
     df = fetch_data_from_source(fetch_type)
     if df is not None:
         return jsonify({
-            'success': True, 'table_html': df.to_html(classes='table table-bordered text-center', index=False),
+            'success': True, 'table_html': df.to_html(classes='table table-bordered text-center', index=False, table_id='resultGrid'),
             'columns': list(df.columns), 'rows': len(df), 'df_json': df.to_json(orient='split'),
             'is_year_data': (fetch_type == 'year')
         })
@@ -87,29 +82,20 @@ def api_run_analysis():
         data.get('exact_match', False), data.get('month_col'), data.get('step')
 
     patterns, pattern_months = [], set()
-    def _last_non_empty_row(col_name: str) -> int:
+    def _last_non_empty_row(col_name: str):
         if col_name not in df.columns: return -1
-        col = df[col_name]
-        for r in range(len(col)-1, -1, -1):
-            v = col.iloc[r]
-            if isinstance(v, str) and v.strip() != '': return r
-        return -1
+        col = df[col_name]; return next((r for r in range(len(col)-1, -1, -1) if isinstance(col.iloc[r], str) and col.iloc[r].strip() != ''), -1)
     def _prev_cell_year(day_idx: int, month_col: str):
         if day_idx > 0: return day_idx - 1, month_col
-        m = int(month_col[2:])
-        pm = 12 if m == 1 else m - 1
-        pcol = f"TH{pm}"
-        prow = _last_non_empty_row(pcol)
+        m = int(month_col[2:]); pm = 12 if m == 1 else m - 1; pcol = f"TH{pm}"; prow = _last_non_empty_row(pcol)
         return (prow, pcol) if prow >= 0 else (-1, pcol)
     
     if is_year_data:
         cur_day, cur_col = row_idx, selected_month_col
         for _ in range(num_patterns):
             p_day, p_col = _prev_cell_year(cur_day, cur_col)
-            if p_day < 0 or p_col is None: pat = ''
-            else:
-                pat = df.iloc[p_day][p_col]
-                pattern_months.add(p_col)
+            pat = df.iloc[p_day][p_col] if p_day >= 0 and p_col else ''
+            if p_day >= 0: pattern_months.add(p_col)
             patterns.append(pat[-2:] if isinstance(pat, str) and len(pat) >= 2 else '')
             cur_day, cur_col = (p_day, p_col)
     else:
@@ -121,19 +107,16 @@ def api_run_analysis():
     patterns.reverse()
     
     def matches_last_two_digits(v, p): return isinstance(v, str) and len(v) >= 2 and v[-2:] == p
-    def contains_two_digits(v, p):
-        if not (isinstance(v, str) and len(v) >= 2 and isinstance(p, str) and len(p) == 2): return False
-        return p[0] in v and p[1] in v
+    def contains_two_digits(v, p): return isinstance(v, str) and len(p) == 2 and p[0] in v and p[1] in v
     match_func = matches_last_two_digits if exact_match else contains_two_digits
     
     all_results, cau_positions, predict_positions, dan_so_sets = [], set(), set(), [[] for _ in range(12)]
     cols_full = list(df.columns)
-    cols_to_scan = [c for c in cols_full if c not in ['Ngày'] and (c.isdigit() or c.startswith('TH'))]
     if is_year_data:
-        cols_to_scan = [c for c in cols_to_scan if c not in pattern_months and c != selected_month_col]
+        cols_to_scan = [c for c in cols_full if c.startswith('TH') and c not in pattern_months and c != selected_month_col]
     else:
         current_year_col = df.columns[-1]
-        cols_to_scan = [c for c in cols_to_scan if c != current_year_col]
+        cols_to_scan = [c for c in cols_full if c.isdigit() and c != current_year_col]
         
     steps_to_iterate = range(6) if step_to_run is None else [int(step_to_run)]
     
@@ -141,7 +124,7 @@ def api_run_analysis():
         for dir_idx, inside in enumerate([True, False]):
             direction_label = "Từ trên xuống" if inside else "Từ dưới lên"
             gap, count, result_nums = step + 1, 0, []
-            for col_name in cols_to_scan:
+            for j, col_name in enumerate(cols_to_scan):
                 for i in range(len(df)):
                     if (inside and (i + (num_patterns - 1) * gap) >= len(df)) or \
                        (not inside and (i - (num_patterns - 1) * gap) < 0): continue
@@ -149,10 +132,8 @@ def api_run_analysis():
                     for k in range(num_patterns):
                         row_offset = k * gap if inside else -k * gap
                         v = df.iloc[i + row_offset][col_name]
-                        if not match_func(v, patterns[k]):
-                            ok = False
-                            break
-                        pos.append({'row': i + row_offset, 'col': cols_full.index(col_name)})
+                        if not match_func(v, patterns[k]): ok = False; break
+                        pos.append({'row': i + row_offset, 'col_name': col_name})
                     if ok:
                         predict_idx = i + (num_patterns * gap if inside else -num_patterns * gap)
                         if 0 <= predict_idx < len(df):
@@ -161,7 +142,7 @@ def api_run_analysis():
                             pv = df.iloc[predict_idx][col_name]
                             if pv:
                                 result_nums.append(pv)
-                                predict_positions.add(json.dumps({'row': predict_idx, 'col': cols_full.index(col_name)}))
+                                predict_positions.add(json.dumps({'row': predict_idx, 'col_name': col_name}))
             idx = dir_idx * 6 + step
             dan_so_sets[idx] = [[a + b for a in num for b in num] for num in result_nums]
             result_text = f"<b>{direction_label} – Cách {step}:</b> {count} cầu"
@@ -175,5 +156,3 @@ def api_run_analysis():
         'predict_positions': [json.loads(p) for p in predict_positions],
         'dan_so_sets': dan_so_sets
     })
-
-# KHỐI GÂY LỖI ĐÃ ĐƯỢC XÓA BỎ
