@@ -124,7 +124,7 @@ def api_run_analysis():
         for dir_idx, inside in enumerate([True, False]):
             direction_label = "Từ trên xuống" if inside else "Từ dưới lên"
             gap, count, result_nums = step + 1, 0, []
-            for j, col_name in enumerate(cols_to_scan):
+            for col_name in cols_to_scan:
                 for i in range(len(df)):
                     if (inside and (i + (num_patterns - 1) * gap) >= len(df)) or \
                        (not inside and (i - (num_patterns - 1) * gap) < 0): continue
