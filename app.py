@@ -11,12 +11,10 @@ from io import StringIO
 # =============================================================================
 st.set_page_config(page_title="Soi Cầu MB - TrungNd@2025", layout="wide")
 
-# CSS tùy chỉnh để bảng hiển thị gọn hơn
 st.markdown("""
 <style>
     .stDataFrame { font-size: 12px; }
     div[data-testid="stExpander"] div[role="button"] p { font-size: 1rem; font-weight: bold; }
-    /* Làm gọn header của expander */
     div[data-testid="stExpander"] { margin-bottom: 10px; border: 1px solid #e0e0e0; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
@@ -69,7 +67,6 @@ def fetch_data(type_data='month'):
         table = next(t for t in soup2.find_all('table') if t.find('tr') and table_kw in t.find('tr').get_text())
         df = pd.read_html(StringIO(str(table)), header=0)[0].fillna('')
         
-        # Clean data
         def fmt(v, col_name):
             s = str(v).strip()
             if not s or s == '-----': return ''
@@ -278,18 +275,31 @@ def main():
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
         with col2:
-            # ĐÃ SỬA: Đặt 'Highlight Cầu' lên đầu tiên
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
 
         results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
 
         if view_mode == "Highlight Cầu":
-            st.caption(f"Đang hiển thị các vị trí cầu trùng khớp với {num_patterns} mẫu {patterns}")
+            st.caption(f"Đang hiển thị: Màu vàng = Cầu hoàn chỉnh | Các màu khác = Trùng khớp mẫu đơn lẻ")
             
             def highlight_cells(x):
                 df_css = pd.DataFrame('', index=x.index, columns=x.columns)
                 
-                current_patterns_pos = []
+                # 0. TÔ MÀU CÁC Ô KHỚP MẪU ĐƠN LẺ (BACKGROUND NOISE)
+                # (Logic mới thêm: Giúp bảng không bị trắng trơn khi không có cầu hoàn chỉnh)
+                for col in x.columns:
+                    if col == 'Ngày': continue
+                    col_data = x[col]
+                    # Duyệt qua từng ô, kiểm tra xem có khớp mẫu nào không
+                    # Ưu tiên mẫu mới nhất (cuối list) -> cũ nhất (như bản gốc)
+                    for idx, val in col_data.items():
+                        val_str = str(val)
+                        for p_i in range(len(patterns)-1, -1, -1):
+                            if matches_last_two_digits(val_str, patterns[p_i], exact_match):
+                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}'
+                                break
+                
+                # 1. TÔ MÀU CỘT NGUỒN (MẪU INPUT) - Ghi đè để đảm bảo hiển thị đúng mẫu
                 if is_year_data:
                     cur_d, cur_c = row_idx, selected_month
                     for i in range(num_patterns):
@@ -303,12 +313,16 @@ def main():
                         for i in range(1, num_patterns + 1):
                             idx = row_idx - i
                             if idx >= 0:
+                                # Logic màu: Mẫu xa nhất (i=num) dùng màu đầu tiên của list tương ứng patterns[0]
+                                # patterns đã reverse() -> patterns[0] là xa nhất
                                 df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
 
+                # 2. TÔ MÀU CẦU HOÀN CHỈNH (MÀU VÀNG) - Ghi đè
                 for r_idx, c_name in cau_pos:
                     if (r_idx, c_name) not in pred_pos:
                         df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
                 
+                # 3. TÔ MÀU DỰ ĐOÁN (MÀU ĐỎ) - Ghi đè
                 for r_idx, c_name in pred_pos:
                     df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
 
@@ -328,7 +342,6 @@ def main():
         with col_left:
             st.markdown("#### Chi tiết từng cách")
             for key, data in results.items():
-                # ĐÃ SỬA: expanded=True để luôn mở chi tiết
                 with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
                     if data['count'] > 0:
                         st.write(f"Giá trị: {', '.join(data['values'])}")
