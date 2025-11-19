@@ -80,14 +80,26 @@ def fetch_data(type_data='month'):
         st.error(f"Lỗi lấy dữ liệu: {e}")
         return None
 
+# --- SỬA LỖI LOGIC SO KHỚP ---
 def matches_last_two_digits(value, pattern, exact=False):
+    """
+    value: Giá trị trong bảng (VD: '12345')
+    pattern: Mẫu cầu (VD: '45')
+    exact: True (Đúng thứ tự), False (Cho phép đảo)
+    """
     if not value or not pattern or len(str(value)) < 2 or len(str(pattern)) != 2:
         return False
-    val_str = str(value)[-2:]
+    
+    # Lấy 2 số cuối của giá trị trong bảng
+    val_str = str(value)[-2:] 
+    
     if exact:
+        # Chế độ chính xác: '45' chỉ khớp '45'
         return val_str == pattern
     else:
-        return pattern[0] in val_str and pattern[1] in val_str
+        # Chế độ có chứa (đảo): '45' khớp '45' và '54'
+        # Sử dụng sorted để so sánh danh sách ký tự -> sửa lỗi số kép (55 vs 53)
+        return sorted(val_str) == sorted(pattern)
 
 def get_prev_cell_year(df, row_idx, col_name):
     if row_idx > 0:
@@ -161,12 +173,11 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
             
             for col in search_cols:
                 for i in range(len(df)):
-                    match = False
-                    positions_temp = []
                     
                     if inside: 
                         if i <= len(df) - num_patterns * gap:
                             ok = True
+                            positions_temp = []
                             for k in range(num_patterns):
                                 val = df.iloc[i + k*gap][col]
                                 if not matches_last_two_digits(val, patterns[k], exact_match):
@@ -186,6 +197,7 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                     else: 
                         if i >= (num_patterns - 1) * gap:
                             ok = True
+                            positions_temp = []
                             for k in range(num_patterns):
                                 val = df.iloc[i - k*gap][col]
                                 if not matches_last_two_digits(val, patterns[k], exact_match):
@@ -256,8 +268,9 @@ def main():
     
     num_patterns = st.sidebar.number_input("Số ngày chạy cầu", min_value=1, max_value=5, value=2)
     
-    match_type = st.sidebar.radio("Kiểu so khớp", ["Có chứa cả 2 ký tự", "Chính xác 2 số cuối"])
-    exact_match = (match_type == "Chính xác 2 số cuối")
+    # ĐÃ SỬA LABEL CHO DỄ HIỂU HƠN
+    match_type = st.sidebar.radio("Kiểu so khớp", ["Bắt cả bộ (gồm số đảo)", "Chính xác (đúng thứ tự)"])
+    exact_match = (match_type == "Chính xác (đúng thứ tự)")
 
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
     patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
@@ -280,18 +293,15 @@ def main():
         results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
 
         if view_mode == "Highlight Cầu":
-            st.caption(f"Đang hiển thị: Màu vàng = Cầu hoàn chỉnh | Các màu khác = Trùng khớp mẫu đơn lẻ")
+            st.caption(f"Màu Vàng = Cầu hoàn chỉnh | Màu nhạt = Khớp từng mẫu lẻ | Chế độ: {match_type}")
             
             def highlight_cells(x):
                 df_css = pd.DataFrame('', index=x.index, columns=x.columns)
                 
-                # 0. TÔ MÀU CÁC Ô KHỚP MẪU ĐƠN LẺ (BACKGROUND NOISE)
-                # (Logic mới thêm: Giúp bảng không bị trắng trơn khi không có cầu hoàn chỉnh)
+                # 0. TÔ MÀU NỀN (KHỚP MẪU LẺ)
                 for col in x.columns:
                     if col == 'Ngày': continue
                     col_data = x[col]
-                    # Duyệt qua từng ô, kiểm tra xem có khớp mẫu nào không
-                    # Ưu tiên mẫu mới nhất (cuối list) -> cũ nhất (như bản gốc)
                     for idx, val in col_data.items():
                         val_str = str(val)
                         for p_i in range(len(patterns)-1, -1, -1):
@@ -299,7 +309,7 @@ def main():
                                 df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}'
                                 break
                 
-                # 1. TÔ MÀU CỘT NGUỒN (MẪU INPUT) - Ghi đè để đảm bảo hiển thị đúng mẫu
+                # 1. TÔ MÀU CỘT NGUỒN
                 if is_year_data:
                     cur_d, cur_c = row_idx, selected_month
                     for i in range(num_patterns):
@@ -313,16 +323,14 @@ def main():
                         for i in range(1, num_patterns + 1):
                             idx = row_idx - i
                             if idx >= 0:
-                                # Logic màu: Mẫu xa nhất (i=num) dùng màu đầu tiên của list tương ứng patterns[0]
-                                # patterns đã reverse() -> patterns[0] là xa nhất
                                 df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
 
-                # 2. TÔ MÀU CẦU HOÀN CHỈNH (MÀU VÀNG) - Ghi đè
+                # 2. TÔ MÀU CẦU (GHI ĐÈ)
                 for r_idx, c_name in cau_pos:
                     if (r_idx, c_name) not in pred_pos:
                         df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
                 
-                # 3. TÔ MÀU DỰ ĐOÁN (MÀU ĐỎ) - Ghi đè
+                # 3. TÔ MÀU DỰ ĐOÁN (GHI ĐÈ)
                 for r_idx, c_name in pred_pos:
                     df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
 
