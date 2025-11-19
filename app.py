@@ -80,7 +80,7 @@ def fetch_data(type_data='month'):
         st.error(f"Lỗi lấy dữ liệu: {e}")
         return None
 
-# --- HÀM SO KHỚP (ĐÃ CẬP NHẬT QUY TẮC KÉP) ---
+# --- HÀM SO KHỚP (GIỮ NGUYÊN LOGIC KÉP LỆCH) ---
 def matches_last_two_digits(value, pattern, exact=False):
     """
     value: Giá trị ô (ví dụ '12345')
@@ -99,16 +99,13 @@ def matches_last_two_digits(value, pattern, exact=False):
         # Chế độ "Có chứa" (Toàn bộ chuỗi)
         
         # 1. Xử lý trường hợp KÉP (00, 11, ..., 99)
-        # Quy tắc: 00 chỉ cần có 1 số 0; 11 chỉ cần có 1 số 1...
         if pattern[0] == pattern[1]:
             return pattern[0] in val_str
             
         # 2. Xử lý trường hợp THƯỜNG (01, 23...)
-        # Quy tắc: Phải chứa đủ cả 2 ký tự
         temp_val = val_str
         for char in pattern:
             if char in temp_val:
-                # Tìm thấy thì xóa ký tự đó đi để kiểm tra tiếp ký tự thứ 2
                 temp_val = temp_val.replace(char, "", 1)
             else:
                 return False
@@ -319,7 +316,7 @@ def main():
         results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
 
         if view_mode == "Highlight Cầu":
-            match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép chỉ cần 1)"
+            match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
             st.caption(f"Màu Vàng = Cầu hoàn chỉnh | Màu nhạt = Khớp mẫu | Chế độ: {match_text}")
             
             def highlight_cells(x):
@@ -359,82 +356,4 @@ def main():
                 
                 # 3. TÔ MÀU DỰ ĐOÁN
                 for r_idx, c_name in pred_pos:
-                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
-
-                return df_css
-
-            st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
-        else:
-            st.dataframe(df, height=600, use_container_width=True)
-
-    # --- TAB 2: THỐNG KÊ MỨC SỐ ---
-    with tab2:
-        st.subheader("Thống kê các mức số (Lên dàn)")
-        
-        col_left, col_right = st.columns([1, 1])
-        final_pairs_bag = []
-        
-        with col_left:
-            st.markdown("#### Chi tiết từng cách")
-            for key, data in results.items():
-                with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
-                    if data['count'] > 0:
-                        st.write(f"Giá trị: {', '.join(data['values'])}")
-                        if st.checkbox(f"Gộp {key}", value=True, key=f"chk_{key}"):
-                            final_pairs_bag.extend(data['pairs'])
-                    else:
-                        st.write("Không có cầu.")
-        
-        with col_right:
-            st.markdown("#### Tổng hợp mức số (Mức cao -> thấp)")
-            if final_pairs_bag:
-                counts = Counter(final_pairs_bag)
-                sorted_levels = sorted(set(counts.values()), reverse=True)
-                
-                levels_text = ""
-                for lvl in sorted_levels:
-                    nums = sorted([k for k, v in counts.items() if v == lvl])
-                    if nums:
-                        line = f"**Mức {lvl}** ({len(nums)} số): {', '.join(nums)}"
-                        st.markdown(line)
-                        levels_text += f"Mức {lvl} ({len(nums)} số): {','.join(nums)}\n"
-                
-                st.text_area("Copy kết quả:", value=levels_text, height=300)
-            else:
-                st.info("Chưa có số liệu để tổng hợp. Hãy đảm bảo có cầu chạy và các checkbox được chọn.")
-
-    # --- TAB 3: KIỂM TRA SỐ ---
-    with tab3:
-        st.subheader("Kiểm tra mức độ xuất hiện của một số")
-        check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
-        
-        if st.button("Kiểm tra") and check_num:
-            if not check_num.isdigit() or len(check_num) != 2:
-                st.error("Vui lòng nhập 2 chữ số.")
-            else:
-                data_check = []
-                for step in range(6):
-                    key_down = f"Trên xuống (↓) - Cách {step}"
-                    count_down = 0
-                    if key_down in results:
-                        pairs = results[key_down]['pairs']
-                        c = Counter(pairs)
-                        count_down = c.get(check_num, 0)
-                    
-                    key_up = f"Dưới lên (↑) - Cách {step}"
-                    count_up = 0
-                    if key_up in results:
-                        pairs = results[key_up]['pairs']
-                        c = Counter(pairs)
-                        count_up = c.get(check_num, 0)
-                        
-                    data_check.append({
-                        "Cách": f"Cách {step}",
-                        "Mức (↓)": count_down,
-                        "Mức (↑)": count_up
-                    })
-                
-                st.table(pd.DataFrame(data_check))
-
-if __name__ == "__main__":
-    main()
+                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: b
