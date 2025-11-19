@@ -80,12 +80,12 @@ def fetch_data(type_data='month'):
         st.error(f"Lỗi lấy dữ liệu: {e}")
         return None
 
-# --- SỬA LỖI LOGIC SO KHỚP ---
+# --- HÀM SO KHỚP ĐÃ SỬA LẠI ---
 def matches_last_two_digits(value, pattern, exact=False):
     """
-    value: Giá trị trong bảng (VD: '12345')
-    pattern: Mẫu cầu (VD: '45')
-    exact: True (Đúng thứ tự), False (Cho phép đảo)
+    value: Giá trị ô (ví dụ '12345')
+    pattern: Mẫu (ví dụ '53')
+    exact: True (Chính xác), False (Có chứa)
     """
     if not value or not pattern or len(str(value)) < 2 or len(str(pattern)) != 2:
         return False
@@ -94,12 +94,13 @@ def matches_last_two_digits(value, pattern, exact=False):
     val_str = str(value)[-2:] 
     
     if exact:
-        # Chế độ chính xác: '45' chỉ khớp '45'
+        # Chế độ chính xác: phải đúng y hệt thứ tự
         return val_str == pattern
     else:
-        # Chế độ có chứa (đảo): '45' khớp '45' và '54'
-        # Sử dụng sorted để so sánh danh sách ký tự -> sửa lỗi số kép (55 vs 53)
-        return sorted(val_str) == sorted(pattern)
+        # Chế độ "Có chứa cả 2 ký tự" (Code gốc: char1 in value and char2 in value)
+        # Ví dụ: Mẫu '53' -> Kiểm tra trong val_str có '5' KHÔNG và có '3' KHÔNG
+        # Ví dụ: Mẫu '55' -> Kiểm tra trong val_str có '5' KHÔNG (cả 2 ký tự đều là 5)
+        return pattern[0] in val_str and pattern[1] in val_str
 
 def get_prev_cell_year(df, row_idx, col_name):
     if row_idx > 0:
@@ -268,8 +269,7 @@ def main():
     
     num_patterns = st.sidebar.number_input("Số ngày chạy cầu", min_value=1, max_value=5, value=2)
     
-    # ĐÃ SỬA LABEL CHO DỄ HIỂU HƠN
-    match_type = st.sidebar.radio("Kiểu so khớp", ["Bắt cả bộ (gồm số đảo)", "Chính xác (đúng thứ tự)"])
+    match_type = st.sidebar.radio("Kiểu so khớp", ["Có chứa cả 2 ký tự", "Chính xác (đúng thứ tự)"])
     exact_match = (match_type == "Chính xác (đúng thứ tự)")
 
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
