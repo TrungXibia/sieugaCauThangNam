@@ -1,158 +1,425 @@
+import streamlit as st
 import pandas as pd
-from bs4 import BeautifulSoup
 import requests
-import warnings
-from collections import Counter
+from bs4 import BeautifulSoup
 from datetime import datetime
+from collections import Counter
 from io import StringIO
-import json
-from flask import Flask, jsonify, request
-from flask_cors import CORS
 
-app = Flask(__name__)
-CORS(app)
-warnings.filterwarnings("ignore", category=FutureWarning)
+# =============================================================================
+# CẤU HÌNH & STYLE
+# =============================================================================
+st.set_page_config(page_title="Soi Cầu MB - TrungNd@2025", layout="wide")
 
-def _get_month_url(): return 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauThang5So.aspx'
-def _get_year_url(): return 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauNam5So.aspx'
+# CSS tùy chỉnh để bảng hiển thị gọn hơn
+st.markdown("""
+<style>
+    .stDataFrame { font-size: 12px; }
+    div[data-testid="stExpander"] div[role="button"] p { font-size: 1rem; font-weight: bold; }
+</style>
+""", unsafe_allow_html=True)
 
-def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    cleaned_cols = {}
-    for col_name in df.columns:
-        if 'ngày' in str(col_name).lower():
-            cleaned_cols[col_name] = df[col_name].astype(str).str.replace('.0', '', regex=False)
-            continue
-        def fmt(v):
+COLORS = ['#ffcccc', '#ccffcc', '#ccccff', '#ffcc99', '#99ccff', '#ff99cc']
+CAU_COLOR = '#ffff99'
+PREDICT_COLOR = '#ff4b4b'
+
+# =============================================================================
+# HÀM XỬ LÝ DỮ LIỆU (LOGIC GỐC)
+# =============================================================================
+
+def safe_int(val, default=0):
+    try:
+        return int(val)
+    except:
+        return default
+
+@st.cache_data(ttl=600) # Cache dữ liệu 10 phút để tránh spam request
+def fetch_data(type_data='month'):
+    try:
+        sess = requests.Session()
+        if type_data == 'month':
+            url = 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauThang5So.aspx'
+            r1 = sess.get(url, timeout=10)
+            soup = BeautifulSoup(r1.text, 'lxml')
+            payload = {inp['name']: inp.get('value', '') for inp in soup.find_all('input', {'type': 'hidden'})}
+            m, y = str(datetime.now().month), str(datetime.now().year)
+            payload.update({
+                'ctl00$ContentPlaceHolder1$ddlThang': m,
+                'ctl00$ContentPlaceHolder1$ddlNam': y,
+                'ctl00$ContentPlaceHolder1$btnXem': 'Xem'
+            })
+            r2 = sess.post(url, data=payload, timeout=10)
+            table_kw = 'Ngày'
+        else: # year
+            url = 'https://congcuxoso.com/MienBac/DacBiet/PhoiCauDacBiet/PhoiCauNam5So.aspx'
+            r1 = sess.get(url, timeout=10)
+            soup = BeautifulSoup(r1.text, 'lxml')
+            payload = {inp['name']: inp.get('value', '') for inp in soup.find_all('input', {'type': 'hidden'})}
+            y = str(datetime.now().year)
+            payload.update({
+                'ctl00$ContentPlaceHolder1$ddlNam': y,
+                'ctl00$ContentPlaceHolder1$btnXem': 'Xem'
+            })
+            r2 = sess.post(url, data=payload, timeout=10)
+            table_kw = 'TH1'
+
+        soup2 = BeautifulSoup(r2.text, 'lxml')
+        table = next(t for t in soup2.find_all('table') if t.find('tr') and table_kw in t.find('tr').get_text())
+        df = pd.read_html(StringIO(str(table)), header=0)[0].fillna('')
+        
+        # Clean data
+        def fmt(v, col_name):
             s = str(v).strip()
             if not s or s == '-----': return ''
             if s.endswith('.0'): s = s[:-2]
+            if col_name == 'Ngày': return s
             return s.zfill(5)
-        cleaned_cols[col_name] = df[col_name].map(fmt)
-    new_df = pd.DataFrame(cleaned_cols)
-    if 'Ngày.1' in new_df.columns: new_df = new_df.rename(columns={'Ngày.1': 'Ngày'})
-    return new_df
-
-def fetch_data_from_source(fetch_type='month'):
-    try:
-        sess = requests.Session()
-        url = _get_month_url() if fetch_type == 'month' else _get_year_url()
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r1 = sess.get(url, timeout=20, headers=headers)
-        r1.raise_for_status()
-        soup = BeautifulSoup(r1.text, 'lxml')
-        payload = {inp['name']: inp.get('value', '') for inp in soup.find_all('input', {'type': 'hidden'})}
-        y, m = str(datetime.now().year), str(datetime.now().month)
-        if fetch_type == 'month':
-            payload.update({'ctl00$ContentPlaceHolder1$ddlThang': m, 'ctl00$ContentPlaceHolder1$ddlNam': y, 'ctl00$ContentPlaceHolder1$btnXem': 'Xem'})
-        else:
-            payload.update({'ctl00$ContentPlaceHolder1$ddlNam': y, 'ctl00$ContentPlaceHolder1$btnXem': 'Xem'})
-        r2 = sess.post(url, data=payload, timeout=20, headers=headers)
-        r2.raise_for_status()
-        soup2 = BeautifulSoup(r2.text, 'lxml')
-        keyword = 'Ngày' if fetch_type == 'month' else 'TH1'
-        table = next(t for t in soup2.find_all('table') if t.find('tr') and keyword in t.find('tr').get_text())
-        df = pd.read_html(StringIO(str(table)), header=0)[0].fillna('')
-        return _clean_df(df)
+        
+        df = df.apply(lambda col: col.map(lambda v: fmt(v, col.name)))
+        return df
     except Exception as e:
-        print(f"Error fetching data: {e}")
+        st.error(f"Lỗi lấy dữ liệu: {e}")
         return None
 
-@app.route('/')
-def home(): return "Backend API is running."
+def matches_last_two_digits(value, pattern, exact=False):
+    if not value or not pattern or len(str(value)) < 2 or len(str(pattern)) != 2:
+        return False
+    val_str = str(value)[-2:]
+    if exact:
+        return val_str == pattern
+    else:
+        return pattern[0] in val_str and pattern[1] in val_str
 
-@app.route('/fetch_data', methods=['POST'])
-def api_fetch_data():
-    data = request.get_json()
-    fetch_type = data.get('type', 'month')
-    df = fetch_data_from_source(fetch_type)
-    if df is not None:
-        return jsonify({
-            'success': True, 'table_html': df.to_html(classes='table table-bordered text-center', index=False, table_id='resultGrid'),
-            'columns': list(df.columns), 'rows': len(df), 'df_json': df.to_json(orient='split'),
-            'is_year_data': (fetch_type == 'year')
-        })
-    return jsonify({'success': False, 'message': f'Kết nối {fetch_type} thất bại.'})
+# Logic tìm ô trước đó cho dữ liệu Năm
+def get_prev_cell_year(df, row_idx, col_name):
+    if row_idx > 0:
+        return row_idx - 1, col_name
+    
+    if not col_name.startswith("TH"): return -1, None
+    m = int(col_name[2:])
+    pm = 12 if m == 1 else m - 1
+    pcol = f"TH{pm}"
+    
+    # Tìm dòng cuối có dữ liệu của tháng trước
+    if pcol not in df.columns: return -1, None
+    col_data = df[pcol]
+    for r in range(len(col_data)-1, -1, -1):
+        if col_data.iloc[r] != '':
+            return r, pcol
+    return -1, pcol
 
-@app.route('/run_analysis', methods=['POST'])
-def api_run_analysis():
-    data = request.get_json()
-    df = pd.read_json(StringIO(data['df_json']), orient='split')
-    is_year_data, row_idx, num_patterns, exact_match, selected_month_col, step_to_run = \
-        data.get('is_year_data', False), int(data.get('day_idx', len(df) - 1)), int(data.get('num_patterns', 2)), \
-        data.get('exact_match', False), data.get('month_col'), data.get('step')
+# =============================================================================
+# LOGIC TÌM CẦU
+# =============================================================================
 
-    patterns, pattern_months = [], set()
-    def _last_non_empty_row(col_name: str):
-        if col_name not in df.columns: return -1
-        col = df[col_name]; return next((r for r in range(len(col)-1, -1, -1) if isinstance(col.iloc[r], str) and col.iloc[r].strip() != ''), -1)
-    def _prev_cell_year(day_idx: int, month_col: str):
-        if day_idx > 0: return day_idx - 1, month_col
-        m = int(month_col[2:]); pm = 12 if m == 1 else m - 1; pcol = f"TH{pm}"; prow = _last_non_empty_row(pcol)
-        return (prow, pcol) if prow >= 0 else (-1, pcol)
+def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
+    patterns = []
+    pattern_months = set()
     
     if is_year_data:
-        cur_day, cur_col = row_idx, selected_month_col
+        cur_day, cur_col = row_idx, col_name
         for _ in range(num_patterns):
-            p_day, p_col = _prev_cell_year(cur_day, cur_col)
-            pat = df.iloc[p_day][p_col] if p_day >= 0 and p_col else ''
-            if p_day >= 0: pattern_months.add(p_col)
-            patterns.append(pat[-2:] if isinstance(pat, str) and len(pat) >= 2 else '')
-            cur_day, cur_col = (p_day, p_col)
+            p_day, p_col = get_prev_cell_year(df, cur_day, cur_col)
+            if p_day < 0 or not p_col:
+                patterns.append('')
+            else:
+                val = df.iloc[p_day][p_col]
+                patterns.append(val[-2:] if len(val) >= 2 else '')
+                pattern_months.add(p_col)
+                cur_day, cur_col = p_day, p_col
     else:
-        year_col = df.columns[-1]
-        for offset in range(1, num_patterns + 1):
-            idx = row_idx - offset
-            pat = df.iloc[idx][year_col] if idx >= 0 else ''
-            patterns.append(pat[-2:] if isinstance(pat, str) and len(pat) >= 2 else '')
-    patterns.reverse()
-    
-    def matches_last_two_digits(v, p): return isinstance(v, str) and len(v) >= 2 and v[-2:] == p
-    def contains_two_digits(v, p): return isinstance(v, str) and len(p) == 2 and p[0] in v and p[1] in v
-    match_func = matches_last_two_digits if exact_match else contains_two_digits
-    
-    all_results, cau_positions, predict_positions, dan_so_sets = [], set(), set(), [[] for _ in range(12)]
-    cols_full = list(df.columns)
-    if is_year_data:
-        cols_to_scan = [c for c in cols_full if c.startswith('TH') and c not in pattern_months and c != selected_month_col]
-    else:
-        current_year_col = df.columns[-1]
-        cols_to_scan = [c for c in cols_full if c.isdigit() and c != current_year_col]
-        
-    steps_to_iterate = range(6) if step_to_run is None else [int(step_to_run)]
-    
-    for step in steps_to_iterate:
-        for dir_idx, inside in enumerate([True, False]):
-            direction_label = "Từ trên xuống" if inside else "Từ dưới lên"
-            gap, count, result_nums = step + 1, 0, []
-            for col_name in cols_to_scan:
-                for i in range(len(df)):
-                    if (inside and (i + (num_patterns - 1) * gap) >= len(df)) or \
-                       (not inside and (i - (num_patterns - 1) * gap) < 0): continue
-                    ok, pos = True, []
-                    for k in range(num_patterns):
-                        row_offset = k * gap if inside else -k * gap
-                        v = df.iloc[i + row_offset][col_name]
-                        if not match_func(v, patterns[k]): ok = False; break
-                        pos.append({'row': i + row_offset, 'col_name': col_name})
-                    if ok:
-                        predict_idx = i + (num_patterns * gap if inside else -num_patterns * gap)
-                        if 0 <= predict_idx < len(df):
-                            count += 1
-                            cau_positions.update(json.dumps(p) for p in pos)
-                            pv = df.iloc[predict_idx][col_name]
-                            if pv:
-                                result_nums.append(pv)
-                                predict_positions.add(json.dumps({'row': predict_idx, 'col_name': col_name}))
-            idx = dir_idx * 6 + step
-            dan_so_sets[idx] = [[a + b for a in num for b in num] for num in result_nums]
-            result_text = f"<b>{direction_label} – Cách {step}:</b> {count} cầu"
-            if result_nums: result_text += f"<br><i>Giá trị:</i> {','.join(result_nums)}"
-            else: result_text += "<br><i>Giá trị:</i> Không tìm thấy cầu"
-            all_results.append(result_text)
+        year_col = str(datetime.now().year)
+        col_to_use = year_col if year_col in df.columns else df.columns[-1]
+        for i in range(1, num_patterns + 1):
+            idx = row_idx - i
+            if idx >= 0:
+                val = df.iloc[idx][col_to_use]
+                patterns.append(val[-2:] if len(val) >= 2 else '')
+            else:
+                patterns.append('')
+                
+    patterns.reverse() # Đảo lại để mẫu xa nhất là mẫu 1
+    return patterns, pattern_months
 
-    return jsonify({
-        'success': True, 'patterns': patterns, 'stats_html': '<hr>'.join(all_results),
-        'cau_positions': [json.loads(p) for p in cau_positions],
-        'predict_positions': [json.loads(p) for p in predict_positions],
-        'dan_so_sets': dan_so_sets
-    })
+def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month):
+    results = {}
+    cau_positions = set()
+    predict_positions = set()
+    
+    # Columns to scan
+    ignore_cols = ['Ngày']
+    if is_year_data:
+        search_cols = [c for c in df.columns if c not in pattern_months and c not in ignore_cols and c != selected_month]
+    else:
+        current_year_col = str(datetime.now().year)
+        search_cols = [c for c in df.columns if c != current_year_col and c not in ignore_cols]
+
+    directions = [("Trên xuống (↓)", True), ("Dưới lên (↑)", False)]
+
+    for step in range(6):
+        gap = step + 1
+        for dir_label, inside in directions:
+            count = 0
+            result_vals = []
+            key = f"{dir_label} - Cách {step}"
+            
+            for col in search_cols:
+                for i in range(len(df)):
+                    # Logic kiểm tra cầu
+                    match = False
+                    positions_temp = []
+                    
+                    if inside: # Từ trên xuống (quá khứ -> hiện tại)
+                        if i <= len(df) - num_patterns * gap:
+                            ok = True
+                            for k in range(num_patterns):
+                                val = df.iloc[i + k*gap][col]
+                                if not matches_last_two_digits(val, patterns[k], exact_match):
+                                    ok = False; break
+                                positions_temp.append((i + k*gap, col))
+                            
+                            if ok:
+                                # Lấy số dự đoán
+                                pred_idx = i + (num_patterns - 1)*gap + gap
+                                if 0 <= pred_idx < len(df):
+                                    pred_val = df.iloc[pred_idx][col]
+                                    if pred_val:
+                                        count += 1
+                                        result_vals.append(pred_val)
+                                        cau_positions.update(positions_temp)
+                                        predict_positions.add((pred_idx, col))
+
+                    else: # Từ dưới lên
+                        if i >= (num_patterns - 1) * gap:
+                            ok = True
+                            for k in range(num_patterns):
+                                val = df.iloc[i - k*gap][col]
+                                if not matches_last_two_digits(val, patterns[k], exact_match):
+                                    ok = False; break
+                                positions_temp.append((i - k*gap, col))
+                                
+                            if ok:
+                                pred_idx = i - (num_patterns - 1)*gap - gap
+                                if 0 <= pred_idx < len(df):
+                                    pred_val = df.iloc[pred_idx][col]
+                                    if pred_val:
+                                        count += 1
+                                        result_vals.append(pred_val)
+                                        cau_positions.update(positions_temp)
+                                        predict_positions.add((pred_idx, col))
+            
+            # Tổng hợp kết quả mức số cho từng cách
+            pairs = []
+            for val in result_vals:
+                if len(val) >= 2: # Tạo dàn số từ 2 số cuối và số đảo
+                    # Trong code gốc logic là: [[a+b for a in num for b in num] for num in result_nums]??
+                    # Có vẻ code gốc đang lấy tổ hợp? 
+                    # "self.dan_so_sets[idx] = [[a+b for a in num for b in num] for num in result_nums]"
+                    # Đoạn này hơi lạ trong code gốc, nhưng nếu input là "12345" thì nó lấy tổ hợp rất nhiều.
+                    # Tuy nhiên input thường là 5 số ĐB.
+                    # Dựa vào GUI code gốc: "self.all_dan_so... uniq = set(x for num in result_nums...)"
+                    # Giả lập lại logic tạo dàn từ chuỗi 5 số: lấy tất cả cặp số có thể ghép từ các chữ số trong chuỗi
+                    digits = list(val)
+                    # Logic code gốc: [a+b for a in num for b in num]. Tức là ghép tất cả với tất cả.
+                    local_pairs = [a+b for a in digits for b in digits]
+                    pairs.extend(local_pairs)
+
+            results[key] = {
+                'count': count,
+                'values': result_vals,
+                'pairs': pairs
+            }
+
+    return results, cau_positions, predict_positions
+
+# =============================================================================
+# GIAO DIỆN CHÍNH
+# =============================================================================
+
+def main():
+    # --- SIDEBAR ---
+    st.sidebar.title("⚙️ Điều khiển")
+    
+    data_mode = st.sidebar.radio("Chế độ dữ liệu", ["Tháng", "Năm"])
+    is_year_data = (data_mode == "Năm")
+    
+    if st.sidebar.button("🔄 Lấy dữ liệu mới"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # Load Data
+    df = fetch_data('year' if is_year_data else 'month')
+    
+    if df is None:
+        st.warning("Chưa có dữ liệu. Vui lòng tải lại.")
+        return
+
+    # Inputs controls
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Cấu hình tìm cầu")
+    
+    days = [str(i) for i in range(1, len(df) + 1)]
+    selected_day = st.sidebar.selectbox("Chọn ngày", days, index=len(days)-1)
+    row_idx = int(selected_day) - 1
+    
+    selected_month = None
+    if is_year_data:
+        months = [c for c in df.columns if c.startswith("TH")]
+        cur_m_idx = datetime.now().month - 1
+        if cur_m_idx < len(months):
+             def_m = months[cur_m_idx]
+        else: def_m = months[0]
+        selected_month = st.sidebar.selectbox("Chọn cột tháng (để lấy mẫu)", months, index=months.index(def_m) if def_m in months else 0)
+    
+    num_patterns = st.sidebar.number_input("Số ngày chạy cầu", min_value=1, max_value=5, value=2)
+    
+    match_type = st.sidebar.radio("Kiểu so khớp", ["Có chứa cả 2 ký tự", "Chính xác 2 số cuối"])
+    exact_match = (match_type == "Chính xác 2 số cuối")
+
+    # --- LOGIC XỬ LÝ MẪU ---
+    col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
+    patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
+    
+    st.sidebar.markdown("#### Mẫu hiện tại:")
+    for i, p in enumerate(patterns):
+        st.sidebar.code(f"Mẫu {i+1}: {p}")
+
+    # --- TABS ---
+    tab1, tab2, tab3 = st.tabs(["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"])
+
+    # --- TAB 1: BẢNG DỮ LIỆU & HIGHLIGHT ---
+    with tab1:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader(f"Bảng kết quả ({data_mode})")
+        with col2:
+            view_mode = st.selectbox("Chế độ xem", ["Dữ liệu gốc", "Highlight Cầu"])
+
+        # Chạy scan cầu
+        results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
+
+        # Hàm style cho dataframe
+        def style_df(val):
+            # Mặc định
+            color = ''
+            # Logic highlight chỉ áp dụng khi user chọn
+            return ''
+
+        # Nếu chọn xem Highlight
+        if view_mode == "Highlight Cầu":
+            # Tạo bản sao df để apply style
+            st.caption(f"Đang hiển thị các vị trí cầu trùng khớp với {num_patterns} mẫu {patterns}")
+            
+            # Custom Styler
+            def highlight_cells(x):
+                df_css = pd.DataFrame('', index=x.index, columns=x.columns)
+                
+                # 1. Highlight Mẫu (Input Pattern)
+                # Tái tạo logic vị trí mẫu để tô màu
+                current_patterns_pos = []
+                if is_year_data:
+                    cur_d, cur_c = row_idx, selected_month
+                    for i in range(num_patterns):
+                         pd_idx, pc_idx = get_prev_cell_year(df, cur_d, cur_c)
+                         if pd_idx >= 0:
+                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[i % len(COLORS)]}'
+                             cur_d, cur_c = pd_idx, pc_idx
+                else:
+                    y_col = str(datetime.now().year)
+                    if y_col in df.columns:
+                        for i in range(1, num_patterns + 1):
+                            idx = row_idx - i
+                            if idx >= 0:
+                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
+
+                # 2. Highlight Cầu và Dự đoán
+                for r_idx, c_name in cau_pos:
+                    if (r_idx, c_name) not in pred_pos: # Ưu tiên màu dự đoán nếu trùng
+                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
+                
+                for r_idx, c_name in pred_pos:
+                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
+
+                return df_css
+
+            st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
+        else:
+            st.dataframe(df, height=600, use_container_width=True)
+
+    # --- TAB 2: THỐNG KÊ MỨC SỐ ---
+    with tab2:
+        st.subheader("Thống kê các mức số (Lên dàn)")
+        
+        # Tổng hợp tất cả các cặp số từ tất cả các cách
+        col_left, col_right = st.columns([1, 1])
+        
+        final_pairs_bag = []
+        
+        with col_left:
+            st.markdown("#### Chi tiết từng cách")
+            for key, data in results.items():
+                with st.expander(f"{key} ({data['count']} cầu)", expanded=False):
+                    if data['count'] > 0:
+                        st.write(f"Giá trị: {', '.join(data['values'])}")
+                        # Checkbox để user chọn có gộp cách này vào mức chung không
+                        if st.checkbox(f"Gộp {key}", value=True, key=f"chk_{key}"):
+                            final_pairs_bag.extend(data['pairs'])
+                    else:
+                        st.write("Không có cầu.")
+        
+        with col_right:
+            st.markdown("#### Tổng hợp mức số (Mức cao -> thấp)")
+            if final_pairs_bag:
+                counts = Counter(final_pairs_bag)
+                sorted_levels = sorted(set(counts.values()), reverse=True)
+                
+                levels_text = ""
+                for lvl in sorted_levels:
+                    nums = sorted([k for k, v in counts.items() if v == lvl])
+                    if nums:
+                        line = f"**Mức {lvl}** ({len(nums)} số): {', '.join(nums)}"
+                        st.markdown(line)
+                        levels_text += f"Mức {lvl} ({len(nums)} số): {','.join(nums)}\n"
+                
+                st.text_area("Copy kết quả:", value=levels_text, height=300)
+            else:
+                st.info("Chưa có số liệu để tổng hợp. Hãy đảm bảo có cầu chạy và các checkbox được chọn.")
+
+    # --- TAB 3: KIỂM TRA SỐ ---
+    with tab3:
+        st.subheader("Kiểm tra mức độ xuất hiện của một số")
+        check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
+        
+        if st.button("Kiểm tra") and check_num:
+            if not check_num.isdigit() or len(check_num) != 2:
+                st.error("Vui lòng nhập 2 chữ số.")
+            else:
+                data_check = []
+                # Duyệt lại kết quả đã tính
+                for step in range(6):
+                    # Lấy data chiều xuống
+                    key_down = f"Trên xuống (↓) - Cách {step}"
+                    count_down = 0
+                    if key_down in results:
+                        pairs = results[key_down]['pairs']
+                        c = Counter(pairs)
+                        count_down = c.get(check_num, 0)
+                    
+                    # Lấy data chiều lên
+                    key_up = f"Dưới lên (↑) - Cách {step}"
+                    count_up = 0
+                    if key_up in results:
+                        pairs = results[key_up]['pairs']
+                        c = Counter(pairs)
+                        count_up = c.get(check_num, 0)
+                        
+                    data_check.append({
+                        "Cách": f"Cách {step}",
+                        "Mức (↓)": count_down,
+                        "Mức (↑)": count_up
+                    })
+                
+                st.table(pd.DataFrame(data_check))
+
+if __name__ == "__main__":
+    main()
