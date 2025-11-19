@@ -80,7 +80,7 @@ def fetch_data(type_data='month'):
         st.error(f"Lỗi lấy dữ liệu: {e}")
         return None
 
-# --- HÀM SO KHỚP ĐÃ SỬA LẠI ---
+# --- HÀM SO KHỚP (ĐÃ CHUẨN LOGIC) ---
 def matches_last_two_digits(value, pattern, exact=False):
     """
     value: Giá trị ô (ví dụ '12345')
@@ -97,9 +97,8 @@ def matches_last_two_digits(value, pattern, exact=False):
         # Chế độ chính xác: phải đúng y hệt thứ tự
         return val_str == pattern
     else:
-        # Chế độ "Có chứa cả 2 ký tự" (Code gốc: char1 in value and char2 in value)
-        # Ví dụ: Mẫu '53' -> Kiểm tra trong val_str có '5' KHÔNG và có '3' KHÔNG
-        # Ví dụ: Mẫu '55' -> Kiểm tra trong val_str có '5' KHÔNG (cả 2 ký tự đều là 5)
+        # Chế độ "Có chứa cả 2 ký tự" (Logic gốc: char1 in value and char2 in value)
+        # VD: Mẫu '53' trong '53' -> True, trong '35' -> True, trong '15' -> False
         return pattern[0] in val_str and pattern[1] in val_str
 
 def get_prev_cell_year(df, row_idx, col_name):
@@ -174,7 +173,6 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
             
             for col in search_cols:
                 for i in range(len(df)):
-                    
                     if inside: 
                         if i <= len(df) - num_patterns * gap:
                             ok = True
@@ -194,7 +192,6 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                         result_vals.append(pred_val)
                                         cau_positions.update(positions_temp)
                                         predict_positions.add((pred_idx, col))
-
                     else: 
                         if i >= (num_patterns - 1) * gap:
                             ok = True
@@ -235,6 +232,23 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
 # =============================================================================
 
 def main():
+    # --- KHỞI TẠO SESSION STATE ---
+    # Để lưu trạng thái của 2 checkbox
+    if 'exact_match_state' not in st.session_state:
+        st.session_state.exact_match_state = False
+    if 'contains_both_state' not in st.session_state:
+        st.session_state.contains_both_state = True
+
+    # --- HÀM CALLBACK (LOGIC TOGGLE) ---
+    # Áp dụng 2 hàm bạn yêu cầu
+    def toggle_exact_match():
+        if st.session_state.exact_match_state:
+            st.session_state.contains_both_state = False
+
+    def toggle_contains_both():
+        if st.session_state.contains_both_state:
+            st.session_state.exact_match_state = False
+
     # --- SIDEBAR ---
     st.sidebar.title("⚙️ Điều khiển")
     
@@ -269,9 +283,30 @@ def main():
     
     num_patterns = st.sidebar.number_input("Số ngày chạy cầu", min_value=1, max_value=5, value=2)
     
-    match_type = st.sidebar.radio("Kiểu so khớp", ["Có chứa cả 2 ký tự", "Chính xác (đúng thứ tự)"])
-    exact_match = (match_type == "Chính xác (đúng thứ tự)")
-
+    # --- ÁP DỤNG 2 CHECKBOX VỚI LOGIC TOGGLE ---
+    st.sidebar.text("Kiểu so khớp:")
+    
+    # Checkbox 1: Chính xác mẫu
+    st.sidebar.checkbox(
+        "Chính xác mẫu (đúng thứ tự)", 
+        key='exact_match_state', 
+        on_change=toggle_exact_match
+    )
+    
+    # Checkbox 2: Có chứa cả 2 ký tự
+    st.sidebar.checkbox(
+        "Có chứa cả 2 ký tự", 
+        key='contains_both_state', 
+        on_change=toggle_contains_both
+    )
+    
+    # Lấy giá trị từ session state để dùng cho logic bên dưới
+    exact_match = st.session_state.exact_match_state
+    # Lưu ý: Nếu người dùng bỏ chọn cả 2 thì mặc định exact_match sẽ False (tức là logic sẽ chạy theo contains_both nếu không check kỹ)
+    # Tuy nhiên, theo code gốc, hàm so khớp chạy theo biến exact_match. 
+    # Nếu exact_match = False -> Code chạy logic "contains".
+    
+    # Cập nhật lại display patterns
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
     patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
     
@@ -293,12 +328,13 @@ def main():
         results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
 
         if view_mode == "Highlight Cầu":
-            st.caption(f"Màu Vàng = Cầu hoàn chỉnh | Màu nhạt = Khớp từng mẫu lẻ | Chế độ: {match_type}")
+            match_text = "Chính xác" if exact_match else "Có chứa"
+            st.caption(f"Màu Vàng = Cầu hoàn chỉnh | Màu nhạt = Khớp từng mẫu lẻ | Chế độ: {match_text}")
             
             def highlight_cells(x):
                 df_css = pd.DataFrame('', index=x.index, columns=x.columns)
                 
-                # 0. TÔ MÀU NỀN (KHỚP MẪU LẺ)
+                # 0. TÔ MÀU NỀN
                 for col in x.columns:
                     if col == 'Ngày': continue
                     col_data = x[col]
@@ -325,12 +361,12 @@ def main():
                             if idx >= 0:
                                 df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
 
-                # 2. TÔ MÀU CẦU (GHI ĐÈ)
+                # 2. TÔ MÀU CẦU
                 for r_idx, c_name in cau_pos:
                     if (r_idx, c_name) not in pred_pos:
                         df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
                 
-                # 3. TÔ MÀU DỰ ĐOÁN (GHI ĐÈ)
+                # 3. TÔ MÀU DỰ ĐOÁN
                 for r_idx, c_name in pred_pos:
                     df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
 
