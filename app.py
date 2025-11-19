@@ -16,8 +16,6 @@ st.markdown("""
 <style>
     .stDataFrame { font-size: 12px; }
     div[data-testid="stExpander"] div[role="button"] p { font-size: 1rem; font-weight: bold; }
-    /* Làm gọn header của expander */
-    div[data-testid="stExpander"] { margin-bottom: 10px; border: 1px solid #e0e0e0; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -26,7 +24,7 @@ CAU_COLOR = '#ffff99'
 PREDICT_COLOR = '#ff4b4b'
 
 # =============================================================================
-# HÀM XỬ LÝ DỮ LIỆU
+# HÀM XỬ LÝ DỮ LIỆU (LOGIC GỐC)
 # =============================================================================
 
 def safe_int(val, default=0):
@@ -35,7 +33,7 @@ def safe_int(val, default=0):
     except:
         return default
 
-@st.cache_data(ttl=600) 
+@st.cache_data(ttl=600) # Cache dữ liệu 10 phút để tránh spam request
 def fetch_data(type_data='month'):
     try:
         sess = requests.Session()
@@ -92,6 +90,7 @@ def matches_last_two_digits(value, pattern, exact=False):
     else:
         return pattern[0] in val_str and pattern[1] in val_str
 
+# Logic tìm ô trước đó cho dữ liệu Năm
 def get_prev_cell_year(df, row_idx, col_name):
     if row_idx > 0:
         return row_idx - 1, col_name
@@ -101,6 +100,7 @@ def get_prev_cell_year(df, row_idx, col_name):
     pm = 12 if m == 1 else m - 1
     pcol = f"TH{pm}"
     
+    # Tìm dòng cuối có dữ liệu của tháng trước
     if pcol not in df.columns: return -1, None
     col_data = df[pcol]
     for r in range(len(col_data)-1, -1, -1):
@@ -138,7 +138,7 @@ def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
             else:
                 patterns.append('')
                 
-    patterns.reverse()
+    patterns.reverse() # Đảo lại để mẫu xa nhất là mẫu 1
     return patterns, pattern_months
 
 def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month):
@@ -146,6 +146,7 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
     cau_positions = set()
     predict_positions = set()
     
+    # Columns to scan
     ignore_cols = ['Ngày']
     if is_year_data:
         search_cols = [c for c in df.columns if c not in pattern_months and c not in ignore_cols and c != selected_month]
@@ -164,10 +165,11 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
             
             for col in search_cols:
                 for i in range(len(df)):
+                    # Logic kiểm tra cầu
                     match = False
                     positions_temp = []
                     
-                    if inside: 
+                    if inside: # Từ trên xuống (quá khứ -> hiện tại)
                         if i <= len(df) - num_patterns * gap:
                             ok = True
                             for k in range(num_patterns):
@@ -177,6 +179,7 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                 positions_temp.append((i + k*gap, col))
                             
                             if ok:
+                                # Lấy số dự đoán
                                 pred_idx = i + (num_patterns - 1)*gap + gap
                                 if 0 <= pred_idx < len(df):
                                     pred_val = df.iloc[pred_idx][col]
@@ -186,7 +189,7 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                         cau_positions.update(positions_temp)
                                         predict_positions.add((pred_idx, col))
 
-                    else: 
+                    else: # Từ dưới lên
                         if i >= (num_patterns - 1) * gap:
                             ok = True
                             for k in range(num_patterns):
@@ -205,10 +208,19 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                         cau_positions.update(positions_temp)
                                         predict_positions.add((pred_idx, col))
             
+            # Tổng hợp kết quả mức số cho từng cách
             pairs = []
             for val in result_vals:
-                if len(val) >= 2: 
+                if len(val) >= 2: # Tạo dàn số từ 2 số cuối và số đảo
+                    # Trong code gốc logic là: [[a+b for a in num for b in num] for num in result_nums]??
+                    # Có vẻ code gốc đang lấy tổ hợp? 
+                    # "self.dan_so_sets[idx] = [[a+b for a in num for b in num] for num in result_nums]"
+                    # Đoạn này hơi lạ trong code gốc, nhưng nếu input là "12345" thì nó lấy tổ hợp rất nhiều.
+                    # Tuy nhiên input thường là 5 số ĐB.
+                    # Dựa vào GUI code gốc: "self.all_dan_so... uniq = set(x for num in result_nums...)"
+                    # Giả lập lại logic tạo dàn từ chuỗi 5 số: lấy tất cả cặp số có thể ghép từ các chữ số trong chuỗi
                     digits = list(val)
+                    # Logic code gốc: [a+b for a in num for b in num]. Tức là ghép tất cả với tất cả.
                     local_pairs = [a+b for a in digits for b in digits]
                     pairs.extend(local_pairs)
 
@@ -235,12 +247,14 @@ def main():
         st.cache_data.clear()
         st.rerun()
 
+    # Load Data
     df = fetch_data('year' if is_year_data else 'month')
     
     if df is None:
         st.warning("Chưa có dữ liệu. Vui lòng tải lại.")
         return
 
+    # Inputs controls
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
@@ -262,6 +276,7 @@ def main():
     match_type = st.sidebar.radio("Kiểu so khớp", ["Có chứa cả 2 ký tự", "Chính xác 2 số cuối"])
     exact_match = (match_type == "Chính xác 2 số cuối")
 
+    # --- LOGIC XỬ LÝ MẪU ---
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
     patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
     
@@ -278,17 +293,29 @@ def main():
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
         with col2:
-            # ĐÃ SỬA: Đặt 'Highlight Cầu' lên đầu tiên
-            view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
+            view_mode = st.selectbox("Chế độ xem", ["Dữ liệu gốc", "Highlight Cầu"])
 
+        # Chạy scan cầu
         results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
 
+        # Hàm style cho dataframe
+        def style_df(val):
+            # Mặc định
+            color = ''
+            # Logic highlight chỉ áp dụng khi user chọn
+            return ''
+
+        # Nếu chọn xem Highlight
         if view_mode == "Highlight Cầu":
+            # Tạo bản sao df để apply style
             st.caption(f"Đang hiển thị các vị trí cầu trùng khớp với {num_patterns} mẫu {patterns}")
             
+            # Custom Styler
             def highlight_cells(x):
                 df_css = pd.DataFrame('', index=x.index, columns=x.columns)
                 
+                # 1. Highlight Mẫu (Input Pattern)
+                # Tái tạo logic vị trí mẫu để tô màu
                 current_patterns_pos = []
                 if is_year_data:
                     cur_d, cur_c = row_idx, selected_month
@@ -305,8 +332,9 @@ def main():
                             if idx >= 0:
                                 df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
 
+                # 2. Highlight Cầu và Dự đoán
                 for r_idx, c_name in cau_pos:
-                    if (r_idx, c_name) not in pred_pos:
+                    if (r_idx, c_name) not in pred_pos: # Ưu tiên màu dự đoán nếu trùng
                         df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
                 
                 for r_idx, c_name in pred_pos:
@@ -322,16 +350,18 @@ def main():
     with tab2:
         st.subheader("Thống kê các mức số (Lên dàn)")
         
+        # Tổng hợp tất cả các cặp số từ tất cả các cách
         col_left, col_right = st.columns([1, 1])
+        
         final_pairs_bag = []
         
         with col_left:
             st.markdown("#### Chi tiết từng cách")
             for key, data in results.items():
-                # ĐÃ SỬA: expanded=True để luôn mở chi tiết
-                with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
+                with st.expander(f"{key} ({data['count']} cầu)", expanded=False):
                     if data['count'] > 0:
                         st.write(f"Giá trị: {', '.join(data['values'])}")
+                        # Checkbox để user chọn có gộp cách này vào mức chung không
                         if st.checkbox(f"Gộp {key}", value=True, key=f"chk_{key}"):
                             final_pairs_bag.extend(data['pairs'])
                     else:
@@ -365,7 +395,9 @@ def main():
                 st.error("Vui lòng nhập 2 chữ số.")
             else:
                 data_check = []
+                # Duyệt lại kết quả đã tính
                 for step in range(6):
+                    # Lấy data chiều xuống
                     key_down = f"Trên xuống (↓) - Cách {step}"
                     count_down = 0
                     if key_down in results:
@@ -373,6 +405,7 @@ def main():
                         c = Counter(pairs)
                         count_down = c.get(check_num, 0)
                     
+                    # Lấy data chiều lên
                     key_up = f"Dưới lên (↑) - Cách {step}"
                     count_up = 0
                     if key_up in results:
