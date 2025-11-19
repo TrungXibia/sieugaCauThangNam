@@ -80,29 +80,20 @@ def fetch_data(type_data='month'):
         st.error(f"Lỗi lấy dữ liệu: {e}")
         return None
 
-# --- HÀM SO KHỚP (GIỮ NGUYÊN LOGIC KÉP LỆCH) ---
+# --- HÀM SO KHỚP ---
 def matches_last_two_digits(value, pattern, exact=False):
-    """
-    value: Giá trị ô (ví dụ '12345')
-    pattern: Mẫu (ví dụ '53' hoặc '00')
-    exact: True (Chính xác 2 số cuối), False (Có chứa)
-    """
     val_str = str(value).strip()
     if not val_str or not pattern:
         return False
 
     if exact:
-        # Chế độ chính xác: Phải cắt lấy 2 số cuối để so sánh
         if len(val_str) < 2: return False
         return val_str[-2:] == pattern
     else:
-        # Chế độ "Có chứa" (Toàn bộ chuỗi)
-        
         # 1. Xử lý trường hợp KÉP (00, 11, ..., 99)
         if pattern[0] == pattern[1]:
             return pattern[0] in val_str
-            
-        # 2. Xử lý trường hợp THƯỜNG (01, 23...)
+        # 2. Xử lý trường hợp THƯỜNG
         temp_val = val_str
         for char in pattern:
             if char in temp_val:
@@ -160,7 +151,10 @@ def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
     patterns.reverse()
     return patterns, pattern_months
 
-def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month):
+def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month, target_step=None):
+    """
+    target_step: None (Chạy tất cả 0-5), hoặc int (0-5) để chỉ chạy cách cụ thể.
+    """
     results = {}
     cau_positions = set()
     predict_positions = set()
@@ -175,6 +169,10 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
     directions = [("Trên xuống (↓)", True), ("Dưới lên (↑)", False)]
 
     for step in range(6):
+        # BỘ LỌC BƯỚC (CÁCH)
+        if target_step is not None and step != target_step:
+            continue
+
         gap = step + 1
         for dir_label, inside in directions:
             count = 0
@@ -305,19 +303,36 @@ def main():
     # --- TABS ---
     tab1, tab2, tab3 = st.tabs(["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"])
 
+    # XỬ LÝ LOGIC CHỌN CÁCH SOI (TAB 1 FILTER)
+    # Ta đặt biến này ở ngoài để dùng chung cho việc tính toán scan_cau
+    
     # --- TAB 1: BẢNG DỮ LIỆU & HIGHLIGHT ---
     with tab1:
-        col1, col2 = st.columns([3, 1])
+        col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
         with col2:
+            # DROPDOWN CHỌN CÁCH SOI
+            step_options = ["Tất cả các cách"] + [f"Cách {i}" for i in range(6)]
+            selected_step_label = st.selectbox("Chọn cách soi", step_options)
+            
+            target_step = None
+            if selected_step_label != "Tất cả các cách":
+                target_step = int(selected_step_label.split(" ")[1])
+
+        with col3:
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
 
-        results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
+        # CHẠY SCAN CẦU VỚI FILTER
+        results, cau_pos, pred_pos = scan_cau(
+            df, patterns, num_patterns, exact_match, 
+            is_year_data, pattern_months, selected_month, 
+            target_step=target_step
+        )
 
         if view_mode == "Highlight Cầu":
             match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
-            st.caption(f"Màu Vàng = Cầu hoàn chỉnh | Màu nhạt = Khớp mẫu | Chế độ: {match_text}")
+            st.caption(f"Chế độ: {match_text} | Đang hiển thị: {selected_step_label}")
             
             def highlight_cells(x):
                 df_css = pd.DataFrame('', index=x.index, columns=x.columns)
@@ -366,13 +381,17 @@ def main():
 
     # --- TAB 2: THỐNG KÊ MỨC SỐ ---
     with tab2:
-        st.subheader("Thống kê các mức số (Lên dàn)")
+        st.subheader(f"Thống kê: {selected_step_label}")
         
         col_left, col_right = st.columns([1, 1])
         final_pairs_bag = []
         
         with col_left:
             st.markdown("#### Chi tiết từng cách")
+            # Nếu chọn "Cách X", results chỉ chứa "Cách X". Nếu chọn "Tất cả", results chứa hết.
+            if not results:
+                 st.info("Không tìm thấy cầu nào cho lựa chọn này.")
+            
             for key, data in results.items():
                 with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
                     if data['count'] > 0:
@@ -416,6 +435,7 @@ def main():
     # --- TAB 3: KIỂM TRA SỐ ---
     with tab3:
         st.subheader("Kiểm tra mức độ xuất hiện của một số")
+        st.caption("Lưu ý: Phần kiểm tra này sẽ dựa trên 'Cách soi' bạn chọn ở Tab 1.")
         check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
         
         if st.button("Kiểm tra") and check_num:
@@ -423,7 +443,10 @@ def main():
                 st.error("Vui lòng nhập 2 chữ số.")
             else:
                 data_check = []
-                for step in range(6):
+                # Chỉ duyệt qua các step hợp lệ (dựa trên target_step)
+                steps_to_check = range(6) if target_step is None else [target_step]
+                
+                for step in steps_to_check:
                     key_down = f"Trên xuống (↓) - Cách {step}"
                     count_down = 0
                     if key_down in results:
