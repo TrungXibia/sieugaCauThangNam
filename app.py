@@ -19,9 +19,22 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-COLORS = ['#ffcccc', '#ccffcc', '#ccccff', '#ffcc99', '#99ccff', '#ff99cc']
-CAU_COLOR = '#ffff99'
-PREDICT_COLOR = '#ff4b4b'
+# --- BẢNG MÀU MỚI (TỐI ƯU CHO DARK MODE/MOBILE) ---
+# Dùng các tông màu đậm để chữ trắng có thể nổi bật
+COLORS = [
+    '#8B0000',  # Đỏ sẫm (DarkRed)
+    '#006400',  # Xanh lá đậm (DarkGreen)
+    '#00008B',  # Xanh dương đậm (DarkBlue)
+    '#8B4500',  # Nâu cam đậm (SaddleBrown)
+    '#2F4F4F',  # Xám xanh (DarkSlateGray)
+    '#4B0082'   # Tím than (Indigo)
+]
+
+# Màu CẦU: Vàng Gold (Sẽ ép chữ màu đen cho dễ đọc)
+CAU_COLOR = '#FFD700' 
+
+# Màu DỰ ĐOÁN: Đỏ tươi (Chữ trắng)
+PREDICT_COLOR = '#FF0000'
 
 # =============================================================================
 # HÀM XỬ LÝ DỮ LIỆU
@@ -90,10 +103,10 @@ def matches_last_two_digits(value, pattern, exact=False):
         if len(val_str) < 2: return False
         return val_str[-2:] == pattern
     else:
-        # 1. Xử lý trường hợp KÉP (00, 11, ..., 99)
+        # 1. KÉP
         if pattern[0] == pattern[1]:
             return pattern[0] in val_str
-        # 2. Xử lý trường hợp THƯỜNG
+        # 2. THƯỜNG
         temp_val = val_str
         for char in pattern:
             if char in temp_val:
@@ -152,9 +165,6 @@ def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
     return patterns, pattern_months
 
 def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month, target_step=None):
-    """
-    target_step: None (Chạy tất cả 0-5), hoặc int (0-5) để chỉ chạy cách cụ thể.
-    """
     results = {}
     cau_positions = set()
     predict_positions = set()
@@ -169,7 +179,6 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
     directions = [("Trên xuống (↓)", True), ("Dưới lên (↑)", False)]
 
     for step in range(6):
-        # BỘ LỌC BƯỚC (CÁCH)
         if target_step is not None and step != target_step:
             continue
 
@@ -303,27 +312,20 @@ def main():
     # --- TABS ---
     tab1, tab2, tab3 = st.tabs(["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"])
 
-    # XỬ LÝ LOGIC CHỌN CÁCH SOI (TAB 1 FILTER)
-    # Ta đặt biến này ở ngoài để dùng chung cho việc tính toán scan_cau
-    
-    # --- TAB 1: BẢNG DỮ LIỆU & HIGHLIGHT ---
+    # --- TAB 1 ---
     with tab1:
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
         with col2:
-            # DROPDOWN CHỌN CÁCH SOI
             step_options = ["Tất cả các cách"] + [f"Cách {i}" for i in range(6)]
             selected_step_label = st.selectbox("Chọn cách soi", step_options)
-            
             target_step = None
             if selected_step_label != "Tất cả các cách":
                 target_step = int(selected_step_label.split(" ")[1])
-
         with col3:
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
 
-        # CHẠY SCAN CẦU VỚI FILTER
         results, cau_pos, pred_pos = scan_cau(
             df, patterns, num_patterns, exact_match, 
             is_year_data, pattern_months, selected_month, 
@@ -332,12 +334,13 @@ def main():
 
         if view_mode == "Highlight Cầu":
             match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
-            st.caption(f"Chế độ: {match_text} | Đang hiển thị: {selected_step_label}")
+            st.caption(f"Chế độ: {match_text} | {selected_step_label}")
             
+            # HÀM STYLE ĐÃ ĐƯỢC TỐI ƯU CHO MOBILE / DARK MODE
             def highlight_cells(x):
                 df_css = pd.DataFrame('', index=x.index, columns=x.columns)
                 
-                # 0. TÔ MÀU NỀN
+                # 0. TÔ MÀU NỀN (PATTERN MATCHING) - Dùng màu đậm, chữ trắng (mặc định)
                 for col in x.columns:
                     if col == 'Ngày': continue
                     col_data = x[col]
@@ -345,16 +348,17 @@ def main():
                         val_str = str(val)
                         for p_i in range(len(patterns)-1, -1, -1):
                             if matches_last_two_digits(val_str, patterns[p_i], exact_match):
-                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}'
+                                # Thêm color: white để chắc chắn dễ đọc
+                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}; color: white;'
                                 break
                 
-                # 1. TÔ MÀU CỘT NGUỒN
+                # 1. TÔ MÀU CỘT NGUỒN (INPUT)
                 if is_year_data:
                     cur_d, cur_c = row_idx, selected_month
                     for i in range(num_patterns):
                          pd_idx, pc_idx = get_prev_cell_year(df, cur_d, cur_c)
                          if pd_idx >= 0:
-                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[i % len(COLORS)]}'
+                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[i % len(COLORS)]}; color: white;'
                              cur_d, cur_c = pd_idx, pc_idx
                 else:
                     y_col = str(datetime.now().year)
@@ -362,16 +366,16 @@ def main():
                         for i in range(1, num_patterns + 1):
                             idx = row_idx - i
                             if idx >= 0:
-                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
+                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}; color: white;'
 
-                # 2. TÔ MÀU CẦU
+                # 2. TÔ MÀU CẦU (Cầu nối) - Vàng Gold + Chữ ĐEN
                 for r_idx, c_name in cau_pos:
                     if (r_idx, c_name) not in pred_pos:
-                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
+                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}; color: black; font-weight: bold;'
                 
-                # 3. TÔ MÀU DỰ ĐOÁN
+                # 3. TÔ MÀU DỰ ĐOÁN - Đỏ Đậm + Chữ Trắng
                 for r_idx, c_name in pred_pos:
-                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
+                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold;'
 
                 return df_css
 
@@ -379,7 +383,7 @@ def main():
         else:
             st.dataframe(df, height=600, use_container_width=True)
 
-    # --- TAB 2: THỐNG KÊ MỨC SỐ ---
+    # --- TAB 2: THỐNG KÊ ---
     with tab2:
         st.subheader(f"Thống kê: {selected_step_label}")
         
@@ -388,7 +392,6 @@ def main():
         
         with col_left:
             st.markdown("#### Chi tiết từng cách")
-            # Nếu chọn "Cách X", results chỉ chứa "Cách X". Nếu chọn "Tất cả", results chứa hết.
             if not results:
                  st.info("Không tìm thấy cầu nào cho lựa chọn này.")
             
@@ -402,14 +405,12 @@ def main():
                         st.write("Không có cầu.")
         
         with col_right:
-            st.markdown("#### Tổng hợp mức số (Mức cao -> thấp)")
+            st.markdown("#### Tổng hợp mức số")
             
             levels_text = ""
-            
             if final_pairs_bag:
                 counts = Counter(final_pairs_bag)
                 sorted_levels = sorted(set(counts.values()), reverse=True)
-                
                 for lvl in sorted_levels:
                     nums = sorted([k for k, v in counts.items() if v == lvl])
                     if nums:
@@ -417,9 +418,8 @@ def main():
                         st.markdown(line)
                         levels_text += f"Mức {lvl} ({len(nums)} số): {','.join(nums)}\n"
             else:
-                st.info("Chưa có số liệu từ các cách.")
+                st.info("Chưa có số liệu.")
 
-            # --- TÍNH TOÁN VÀ HIỂN THỊ MỨC 0 (SỐ THIẾU) ---
             all_possible = set(f"{i:02d}" for i in range(100))
             found_numbers = set(final_pairs_bag) if final_pairs_bag else set()
             missing_numbers = sorted(list(all_possible - found_numbers))
@@ -435,7 +435,6 @@ def main():
     # --- TAB 3: KIỂM TRA SỐ ---
     with tab3:
         st.subheader("Kiểm tra mức độ xuất hiện của một số")
-        st.caption("Lưu ý: Phần kiểm tra này sẽ dựa trên 'Cách soi' bạn chọn ở Tab 1.")
         check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
         
         if st.button("Kiểm tra") and check_num:
@@ -443,7 +442,6 @@ def main():
                 st.error("Vui lòng nhập 2 chữ số.")
             else:
                 data_check = []
-                # Chỉ duyệt qua các step hợp lệ (dựa trên target_step)
                 steps_to_check = range(6) if target_step is None else [target_step]
                 
                 for step in steps_to_check:
