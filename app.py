@@ -217,4 +217,224 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                 
                             if ok:
                                 pred_idx = i - (num_patterns - 1)*gap - gap
-                                if 0 <= pred_idx < le
+                                if 0 <= pred_idx < len(df):
+                                    pred_val = df.iloc[pred_idx][col]
+                                    if pred_val:
+                                        count += 1
+                                        result_vals.append(pred_val)
+                                        cau_positions.update(positions_temp)
+                                        predict_positions.add((pred_idx, col))
+            
+            pairs = []
+            for val in result_vals:
+                if len(val) >= 2: 
+                    digits = list(val)
+                    local_pairs = [a+b for a in digits for b in digits]
+                    pairs.extend(local_pairs)
+
+            results[key] = {
+                'count': count,
+                'values': result_vals,
+                'pairs': pairs
+            }
+
+    return results, cau_positions, predict_positions
+
+# =============================================================================
+# GIAO DIỆN CHÍNH
+# =============================================================================
+
+def main():
+    if 'exact_match_state' not in st.session_state:
+        st.session_state.exact_match_state = False
+    if 'contains_both_state' not in st.session_state:
+        st.session_state.contains_both_state = True
+
+    def toggle_exact_match():
+        if st.session_state.exact_match_state:
+            st.session_state.contains_both_state = False
+
+    def toggle_contains_both():
+        if st.session_state.contains_both_state:
+            st.session_state.exact_match_state = False
+
+    # --- SIDEBAR ---
+    st.sidebar.title("⚙️ Điều khiển")
+    
+    data_mode = st.sidebar.radio("Chế độ dữ liệu", ["Tháng", "Năm"])
+    is_year_data = (data_mode == "Năm")
+    
+    if st.sidebar.button("🔄 Lấy dữ liệu mới"):
+        st.cache_data.clear()
+        st.rerun()
+
+    df = fetch_data('year' if is_year_data else 'month')
+    
+    if df is None:
+        st.warning("Chưa có dữ liệu. Vui lòng tải lại.")
+        return
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Cấu hình tìm cầu")
+    
+    days = [str(i) for i in range(1, len(df) + 1)]
+    selected_day = st.sidebar.selectbox("Chọn ngày", days, index=len(days)-1)
+    row_idx = int(selected_day) - 1
+    
+    selected_month = None
+    if is_year_data:
+        months = [c for c in df.columns if c.startswith("TH")]
+        cur_m_idx = datetime.now().month - 1
+        if cur_m_idx < len(months):
+             def_m = months[cur_m_idx]
+        else: def_m = months[0]
+        selected_month = st.sidebar.selectbox("Chọn cột tháng (để lấy mẫu)", months, index=months.index(def_m) if def_m in months else 0)
+    
+    num_patterns = st.sidebar.number_input("Số ngày chạy cầu", min_value=1, max_value=5, value=2)
+    
+    st.sidebar.text("Kiểu so khớp:")
+    st.sidebar.checkbox("Chính xác mẫu (đúng thứ tự)", key='exact_match_state', on_change=toggle_exact_match)
+    st.sidebar.checkbox("Có chứa (Kép cần 1, Lệch cần 2)", key='contains_both_state', on_change=toggle_contains_both)
+    
+    exact_match = st.session_state.exact_match_state
+
+    col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
+    patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
+    
+    st.sidebar.markdown("#### Mẫu hiện tại:")
+    for i, p in enumerate(patterns):
+        st.sidebar.code(f"Mẫu {i+1}: {p}")
+
+    # --- TABS ---
+    tab1, tab2, tab3 = st.tabs(["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"])
+
+    # --- TAB 1: BẢNG DỮ LIỆU & HIGHLIGHT ---
+    with tab1:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader(f"Bảng kết quả ({data_mode})")
+        with col2:
+            view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
+
+        results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
+
+        if view_mode == "Highlight Cầu":
+            match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép chỉ cần 1)"
+            st.caption(f"Màu Vàng = Cầu hoàn chỉnh | Màu nhạt = Khớp mẫu | Chế độ: {match_text}")
+            
+            def highlight_cells(x):
+                df_css = pd.DataFrame('', index=x.index, columns=x.columns)
+                
+                # 0. TÔ MÀU NỀN
+                for col in x.columns:
+                    if col == 'Ngày': continue
+                    col_data = x[col]
+                    for idx, val in col_data.items():
+                        val_str = str(val)
+                        for p_i in range(len(patterns)-1, -1, -1):
+                            if matches_last_two_digits(val_str, patterns[p_i], exact_match):
+                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}'
+                                break
+                
+                # 1. TÔ MÀU CỘT NGUỒN
+                if is_year_data:
+                    cur_d, cur_c = row_idx, selected_month
+                    for i in range(num_patterns):
+                         pd_idx, pc_idx = get_prev_cell_year(df, cur_d, cur_c)
+                         if pd_idx >= 0:
+                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[i % len(COLORS)]}'
+                             cur_d, cur_c = pd_idx, pc_idx
+                else:
+                    y_col = str(datetime.now().year)
+                    if y_col in df.columns:
+                        for i in range(1, num_patterns + 1):
+                            idx = row_idx - i
+                            if idx >= 0:
+                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
+
+                # 2. TÔ MÀU CẦU
+                for r_idx, c_name in cau_pos:
+                    if (r_idx, c_name) not in pred_pos:
+                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
+                
+                # 3. TÔ MÀU DỰ ĐOÁN
+                for r_idx, c_name in pred_pos:
+                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
+
+                return df_css
+
+            st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
+        else:
+            st.dataframe(df, height=600, use_container_width=True)
+
+    # --- TAB 2: THỐNG KÊ MỨC SỐ ---
+    with tab2:
+        st.subheader("Thống kê các mức số (Lên dàn)")
+        
+        col_left, col_right = st.columns([1, 1])
+        final_pairs_bag = []
+        
+        with col_left:
+            st.markdown("#### Chi tiết từng cách")
+            for key, data in results.items():
+                with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
+                    if data['count'] > 0:
+                        st.write(f"Giá trị: {', '.join(data['values'])}")
+                        if st.checkbox(f"Gộp {key}", value=True, key=f"chk_{key}"):
+                            final_pairs_bag.extend(data['pairs'])
+                    else:
+                        st.write("Không có cầu.")
+        
+        with col_right:
+            st.markdown("#### Tổng hợp mức số (Mức cao -> thấp)")
+            if final_pairs_bag:
+                counts = Counter(final_pairs_bag)
+                sorted_levels = sorted(set(counts.values()), reverse=True)
+                
+                levels_text = ""
+                for lvl in sorted_levels:
+                    nums = sorted([k for k, v in counts.items() if v == lvl])
+                    if nums:
+                        line = f"**Mức {lvl}** ({len(nums)} số): {', '.join(nums)}"
+                        st.markdown(line)
+                        levels_text += f"Mức {lvl} ({len(nums)} số): {','.join(nums)}\n"
+                
+                st.text_area("Copy kết quả:", value=levels_text, height=300)
+            else:
+                st.info("Chưa có số liệu để tổng hợp. Hãy đảm bảo có cầu chạy và các checkbox được chọn.")
+
+    # --- TAB 3: KIỂM TRA SỐ ---
+    with tab3:
+        st.subheader("Kiểm tra mức độ xuất hiện của một số")
+        check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
+        
+        if st.button("Kiểm tra") and check_num:
+            if not check_num.isdigit() or len(check_num) != 2:
+                st.error("Vui lòng nhập 2 chữ số.")
+            else:
+                data_check = []
+                for step in range(6):
+                    key_down = f"Trên xuống (↓) - Cách {step}"
+                    count_down = 0
+                    if key_down in results:
+                        pairs = results[key_down]['pairs']
+                        c = Counter(pairs)
+                        count_down = c.get(check_num, 0)
+                    
+                    key_up = f"Dưới lên (↑) - Cách {step}"
+                    count_up = 0
+                    if key_up in results:
+                        pairs = results[key_up]['pairs']
+                        c = Counter(pairs)
+                        count_up = c.get(check_num, 0)
+                        
+                    data_check.append({
+                        "Cách": f"Cách {step}",
+                        "Mức (↓)": count_down,
+                        "Mức (↑)": count_up
+                    })
+                
+                st.table(pd.DataFrame(data_check))
+
+if __name__ == "__main__":
+    main()
