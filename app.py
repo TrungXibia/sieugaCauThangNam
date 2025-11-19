@@ -356,4 +356,95 @@ def main():
                 
                 # 3. TÔ MÀU DỰ ĐOÁN
                 for r_idx, c_name in pred_pos:
-                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: b
+                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
+
+                return df_css
+
+            st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
+        else:
+            st.dataframe(df, height=600, use_container_width=True)
+
+    # --- TAB 2: THỐNG KÊ MỨC SỐ ---
+    with tab2:
+        st.subheader("Thống kê các mức số (Lên dàn)")
+        
+        col_left, col_right = st.columns([1, 1])
+        final_pairs_bag = []
+        
+        with col_left:
+            st.markdown("#### Chi tiết từng cách")
+            for key, data in results.items():
+                with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
+                    if data['count'] > 0:
+                        st.write(f"Giá trị: {', '.join(data['values'])}")
+                        if st.checkbox(f"Gộp {key}", value=True, key=f"chk_{key}"):
+                            final_pairs_bag.extend(data['pairs'])
+                    else:
+                        st.write("Không có cầu.")
+        
+        with col_right:
+            st.markdown("#### Tổng hợp mức số (Mức cao -> thấp)")
+            
+            levels_text = ""
+            
+            if final_pairs_bag:
+                counts = Counter(final_pairs_bag)
+                sorted_levels = sorted(set(counts.values()), reverse=True)
+                
+                for lvl in sorted_levels:
+                    nums = sorted([k for k, v in counts.items() if v == lvl])
+                    if nums:
+                        line = f"**Mức {lvl}** ({len(nums)} số): {', '.join(nums)}"
+                        st.markdown(line)
+                        levels_text += f"Mức {lvl} ({len(nums)} số): {','.join(nums)}\n"
+            else:
+                st.info("Chưa có số liệu từ các cách.")
+
+            # --- TÍNH TOÁN VÀ HIỂN THỊ MỨC 0 (SỐ THIẾU) ---
+            all_possible = set(f"{i:02d}" for i in range(100))
+            found_numbers = set(final_pairs_bag) if final_pairs_bag else set()
+            missing_numbers = sorted(list(all_possible - found_numbers))
+            
+            if missing_numbers:
+                st.markdown("---")
+                st.markdown(f"**Mức 0** (Không xuất hiện - {len(missing_numbers)} số):")
+                st.code(', '.join(missing_numbers))
+                levels_text += f"Mức 0 ({len(missing_numbers)} số): {','.join(missing_numbers)}\n"
+            
+            st.text_area("Copy kết quả:", value=levels_text, height=300)
+
+    # --- TAB 3: KIỂM TRA SỐ ---
+    with tab3:
+        st.subheader("Kiểm tra mức độ xuất hiện của một số")
+        check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
+        
+        if st.button("Kiểm tra") and check_num:
+            if not check_num.isdigit() or len(check_num) != 2:
+                st.error("Vui lòng nhập 2 chữ số.")
+            else:
+                data_check = []
+                for step in range(6):
+                    key_down = f"Trên xuống (↓) - Cách {step}"
+                    count_down = 0
+                    if key_down in results:
+                        pairs = results[key_down]['pairs']
+                        c = Counter(pairs)
+                        count_down = c.get(check_num, 0)
+                    
+                    key_up = f"Dưới lên (↑) - Cách {step}"
+                    count_up = 0
+                    if key_up in results:
+                        pairs = results[key_up]['pairs']
+                        c = Counter(pairs)
+                        count_up = c.get(check_num, 0)
+                        
+                    data_check.append({
+                        "Cách": f"Cách {step}",
+                        "Mức (↓)": count_down,
+                        "Mức (↑)": count_up
+                    })
+                
+                st.table(pd.DataFrame(data_check))
+
+if __name__ == "__main__":
+    main()
