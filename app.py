@@ -19,22 +19,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- BẢNG MÀU MỚI (TỐI ƯU CHO DARK MODE/MOBILE) ---
-# Dùng các tông màu đậm để chữ trắng có thể nổi bật
-COLORS = [
-    '#8B0000',  # Đỏ sẫm (DarkRed)
-    '#006400',  # Xanh lá đậm (DarkGreen)
-    '#00008B',  # Xanh dương đậm (DarkBlue)
-    '#8B4500',  # Nâu cam đậm (SaddleBrown)
-    '#2F4F4F',  # Xám xanh (DarkSlateGray)
-    '#4B0082'   # Tím than (Indigo)
-]
-
-# Màu CẦU: Vàng Gold (Sẽ ép chữ màu đen cho dễ đọc)
-CAU_COLOR = '#FFD700' 
-
-# Màu DỰ ĐOÁN: Đỏ tươi (Chữ trắng)
-PREDICT_COLOR = '#FF0000'
+COLORS = ['#ffcccc', '#ccffcc', '#ccccff', '#ffcc99', '#99ccff', '#ff99cc']
+CAU_COLOR = '#ffff99'
+PREDICT_COLOR = '#ff4b4b'
 
 # =============================================================================
 # HÀM XỬ LÝ DỮ LIỆU
@@ -45,6 +32,36 @@ def safe_int(val, default=0):
         return int(val)
     except:
         return default
+
+@st.cache_data(ttl=600)
+def fetch_minhngoc_data():
+    """Fetches data from minhngoc.net.vn as a backup/live source."""
+    try:
+        url = 'https://www.minhngoc.net.vn/ket-qua-xo-so/mien-bac.html'
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        box_kqxs = soup.find('div', class_='box_kqxs')
+        if not box_kqxs: return None
+        
+        content = box_kqxs.find('div', class_='content')
+        if not content: return None
+        
+        date_str = box_kqxs.find('div', class_='ngay_quay').get_text(strip=True)
+        import re
+        match = re.search(r'\d{2}/\d{2}/\d{4}', date_str)
+        if not match: return None
+        date_val = match.group(0)
+        
+        gdb = content.find('div', class_='giai_dac_biet')
+        if not gdb: return None
+        special_code = gdb.get_text(strip=True)
+        
+        return {'date': date_val, 'special': special_code}
+    except Exception as e:
+        print(f"Minh Ngoc fetch error: {e}")
+        return None
 
 @st.cache_data(ttl=600) 
 def fetch_data(type_data='month'):
@@ -93,23 +110,35 @@ def fetch_data(type_data='month'):
         st.error(f"Lỗi lấy dữ liệu: {e}")
         return None
 
-# --- HÀM SO KHỚP ---
+# --- HÀM SO KHỚP (ĐÃ CẬP NHẬT QUY TẮC KÉP) ---
 def matches_last_two_digits(value, pattern, exact=False):
+    """
+    value: Giá trị ô (ví dụ '12345')
+    pattern: Mẫu (ví dụ '53' hoặc '00')
+    exact: True (Chính xác 2 số cuối), False (Có chứa)
+    """
     val_str = str(value).strip()
     if not val_str or not pattern:
         return False
 
     if exact:
+        # Chế độ chính xác: Phải cắt lấy 2 số cuối để so sánh
         if len(val_str) < 2: return False
         return val_str[-2:] == pattern
     else:
-        # 1. KÉP
+        # Chế độ "Có chứa" (Toàn bộ chuỗi)
+        
+        # 1. Xử lý trường hợp KÉP (00, 11, ..., 99)
+        # Quy tắc: 00 chỉ cần có 1 số 0; 11 chỉ cần có 1 số 1...
         if pattern[0] == pattern[1]:
             return pattern[0] in val_str
-        # 2. THƯỜNG
+            
+        # 2. Xử lý trường hợp THƯỜNG (01, 23...)
+        # Quy tắc: Phải chứa đủ cả 2 ký tự
         temp_val = val_str
         for char in pattern:
             if char in temp_val:
+                # Tìm thấy thì xóa ký tự đó đi để kiểm tra tiếp ký tự thứ 2
                 temp_val = temp_val.replace(char, "", 1)
             else:
                 return False
@@ -164,7 +193,7 @@ def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
     patterns.reverse()
     return patterns, pattern_months
 
-def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month, target_step=None):
+def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month):
     results = {}
     cau_positions = set()
     predict_positions = set()
@@ -179,9 +208,6 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
     directions = [("Trên xuống (↓)", True), ("Dưới lên (↑)", False)]
 
     for step in range(6):
-        if target_step is not None and step != target_step:
-            continue
-
         gap = step + 1
         for dir_label, inside in directions:
             count = 0
@@ -278,6 +304,13 @@ def main():
         st.warning("Chưa có dữ liệu. Vui lòng tải lại.")
         return
 
+    # --- MINH NGOC STATUS ---
+    mn_data = fetch_minhngoc_data()
+    if mn_data:
+        st.sidebar.success(f"Minh Ngọc: {mn_data['date']} - ĐB: {mn_data['special']}")
+    else:
+        st.sidebar.warning("Không lấy được dữ liệu Minh Ngọc")
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
@@ -312,35 +345,24 @@ def main():
     # --- TABS ---
     tab1, tab2, tab3 = st.tabs(["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"])
 
-    # --- TAB 1 ---
+    # --- TAB 1: BẢNG DỮ LIỆU & HIGHLIGHT ---
     with tab1:
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2 = st.columns([3, 1])
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
         with col2:
-            step_options = ["Tất cả các cách"] + [f"Cách {i}" for i in range(6)]
-            selected_step_label = st.selectbox("Chọn cách soi", step_options)
-            target_step = None
-            if selected_step_label != "Tất cả các cách":
-                target_step = int(selected_step_label.split(" ")[1])
-        with col3:
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
 
-        results, cau_pos, pred_pos = scan_cau(
-            df, patterns, num_patterns, exact_match, 
-            is_year_data, pattern_months, selected_month, 
-            target_step=target_step
-        )
+        results, cau_pos, pred_pos = scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month)
 
         if view_mode == "Highlight Cầu":
-            match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
-            st.caption(f"Chế độ: {match_text} | {selected_step_label}")
+            match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép chỉ cần 1)"
+            st.caption(f"Màu Vàng = Cầu hoàn chỉnh | Màu nhạt = Khớp mẫu | Chế độ: {match_text}")
             
-            # HÀM STYLE ĐÃ ĐƯỢC TỐI ƯU CHO MOBILE / DARK MODE
             def highlight_cells(x):
                 df_css = pd.DataFrame('', index=x.index, columns=x.columns)
                 
-                # 0. TÔ MÀU NỀN (PATTERN MATCHING) - Dùng màu đậm, chữ trắng (mặc định)
+                # 0. TÔ MÀU NỀN
                 for col in x.columns:
                     if col == 'Ngày': continue
                     col_data = x[col]
@@ -348,17 +370,16 @@ def main():
                         val_str = str(val)
                         for p_i in range(len(patterns)-1, -1, -1):
                             if matches_last_two_digits(val_str, patterns[p_i], exact_match):
-                                # Thêm color: white để chắc chắn dễ đọc
-                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}; color: white;'
+                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}'
                                 break
                 
-                # 1. TÔ MÀU CỘT NGUỒN (INPUT)
+                # 1. TÔ MÀU CỘT NGUỒN
                 if is_year_data:
                     cur_d, cur_c = row_idx, selected_month
                     for i in range(num_patterns):
                          pd_idx, pc_idx = get_prev_cell_year(df, cur_d, cur_c)
                          if pd_idx >= 0:
-                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[i % len(COLORS)]}; color: white;'
+                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[i % len(COLORS)]}'
                              cur_d, cur_c = pd_idx, pc_idx
                 else:
                     y_col = str(datetime.now().year)
@@ -366,16 +387,16 @@ def main():
                         for i in range(1, num_patterns + 1):
                             idx = row_idx - i
                             if idx >= 0:
-                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}; color: white;'
+                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}'
 
-                # 2. TÔ MÀU CẦU (Cầu nối) - Vàng Gold + Chữ ĐEN
+                # 2. TÔ MÀU CẦU
                 for r_idx, c_name in cau_pos:
                     if (r_idx, c_name) not in pred_pos:
-                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}; color: black; font-weight: bold;'
+                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}'
                 
-                # 3. TÔ MÀU DỰ ĐOÁN - Đỏ Đậm + Chữ Trắng
+                # 3. TÔ MÀU DỰ ĐOÁN
                 for r_idx, c_name in pred_pos:
-                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold;'
+                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
 
                 return df_css
 
@@ -383,18 +404,15 @@ def main():
         else:
             st.dataframe(df, height=600, use_container_width=True)
 
-    # --- TAB 2: THỐNG KÊ ---
+    # --- TAB 2: THỐNG KÊ MỨC SỐ ---
     with tab2:
-        st.subheader(f"Thống kê: {selected_step_label}")
+        st.subheader("Thống kê các mức số (Lên dàn)")
         
         col_left, col_right = st.columns([1, 1])
         final_pairs_bag = []
         
         with col_left:
             st.markdown("#### Chi tiết từng cách")
-            if not results:
-                 st.info("Không tìm thấy cầu nào cho lựa chọn này.")
-            
             for key, data in results.items():
                 with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
                     if data['count'] > 0:
@@ -405,32 +423,22 @@ def main():
                         st.write("Không có cầu.")
         
         with col_right:
-            st.markdown("#### Tổng hợp mức số")
-            
-            levels_text = ""
+            st.markdown("#### Tổng hợp mức số (Mức cao -> thấp)")
             if final_pairs_bag:
                 counts = Counter(final_pairs_bag)
                 sorted_levels = sorted(set(counts.values()), reverse=True)
+                
+                levels_text = ""
                 for lvl in sorted_levels:
                     nums = sorted([k for k, v in counts.items() if v == lvl])
                     if nums:
                         line = f"**Mức {lvl}** ({len(nums)} số): {', '.join(nums)}"
                         st.markdown(line)
                         levels_text += f"Mức {lvl} ({len(nums)} số): {','.join(nums)}\n"
+                
+                st.text_area("Copy kết quả:", value=levels_text, height=300)
             else:
-                st.info("Chưa có số liệu.")
-
-            all_possible = set(f"{i:02d}" for i in range(100))
-            found_numbers = set(final_pairs_bag) if final_pairs_bag else set()
-            missing_numbers = sorted(list(all_possible - found_numbers))
-            
-            if missing_numbers:
-                st.markdown("---")
-                st.markdown(f"**Mức 0** (Không xuất hiện - {len(missing_numbers)} số):")
-                st.code(', '.join(missing_numbers))
-                levels_text += f"Mức 0 ({len(missing_numbers)} số): {','.join(missing_numbers)}\n"
-            
-            st.text_area("Copy kết quả:", value=levels_text, height=300)
+                st.info("Chưa có số liệu để tổng hợp. Hãy đảm bảo có cầu chạy và các checkbox được chọn.")
 
     # --- TAB 3: KIỂM TRA SỐ ---
     with tab3:
@@ -442,9 +450,7 @@ def main():
                 st.error("Vui lòng nhập 2 chữ số.")
             else:
                 data_check = []
-                steps_to_check = range(6) if target_step is None else [target_step]
-                
-                for step in steps_to_check:
+                for step in range(6):
                     key_down = f"Trên xuống (↓) - Cách {step}"
                     count_down = 0
                     if key_down in results:
