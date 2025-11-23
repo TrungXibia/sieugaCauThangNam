@@ -173,7 +173,7 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
         gap = step + 1
         for dir_label, inside in directions:
             count = 0
-            result_vals = []
+            result_vals = [] # Now stores dicts: {'value': val, 'predict_pos': (r,c), 'cau_pos': [(r,c),...]}
             key = f"{dir_label} - Cách {step}"
             
             for col in search_cols:
@@ -194,9 +194,14 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                     pred_val = df.iloc[pred_idx][col]
                                     if pred_val:
                                         count += 1
-                                        result_vals.append(pred_val)
-                                        cau_positions.update(positions_temp)
-                                        predict_positions.add((pred_idx, col))
+                                    # result_vals.append(pred_val) # OLD
+                                    result_vals.append({
+                                        'value': pred_val,
+                                        'predict_pos': (pred_idx, col),
+                                        'cau_pos': positions_temp
+                                    })
+                                    cau_positions.update(positions_temp)
+                                    predict_positions.add((pred_idx, col))
                     else: 
                         if i >= (num_patterns - 1) * gap:
                             ok = True
@@ -213,12 +218,18 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                     pred_val = df.iloc[pred_idx][col]
                                     if pred_val:
                                         count += 1
-                                        result_vals.append(pred_val)
-                                        cau_positions.update(positions_temp)
-                                        predict_positions.add((pred_idx, col))
+                                    # result_vals.append(pred_val) # OLD
+                                    result_vals.append({
+                                        'value': pred_val,
+                                        'predict_pos': (pred_idx, col),
+                                        'cau_pos': positions_temp
+                                    })
+                                    cau_positions.update(positions_temp)
+                                    predict_positions.add((pred_idx, col))
             
             pairs = []
-            for val in result_vals:
+            for item in result_vals:
+                val = item['value']
                 if len(val) >= 2: 
                     digits = list(val)
                     local_pairs = [a+b for a in digits for b in digits]
@@ -226,7 +237,7 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
 
             results[key] = {
                 'count': count,
-                'values': result_vals,
+                'items': result_vals, # Changed from 'values' to 'items' which contains dicts
                 'pairs': pairs
             }
 
@@ -297,11 +308,30 @@ def main():
     for i, p in enumerate(patterns):
         st.sidebar.code(f"Mẫu {i+1}: {p}")
 
-    # --- TABS ---
-    tab1, tab2, tab3 = st.tabs(["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"])
+    # --- TABS REPLACEMENT (NAVIGATION) ---
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = "📊 Dữ liệu & Cầu"
+    
+    # Callback to update session state when radio changes
+    def on_tab_change():
+        st.session_state.active_tab = st.session_state.nav_radio
+
+    # Sync radio with session state
+    st.radio(
+        "", 
+        ["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"], 
+        key="nav_radio", 
+        index=["📊 Dữ liệu & Cầu", "📈 Thống kê mức số", "🔍 Kiểm tra số"].index(st.session_state.active_tab),
+        horizontal=True,
+        on_change=on_tab_change,
+        label_visibility="collapsed"
+    )
+    
+    # Logic to handle tab content
+    active_tab = st.session_state.active_tab
 
     # --- TAB 1 ---
-    with tab1:
+    if active_tab == "📊 Dữ liệu & Cầu":
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
@@ -319,6 +349,17 @@ def main():
             is_year_data, pattern_months, selected_month, 
             target_step=target_step
         )
+
+        # Xử lý highlight từ click bên Tab 2
+        highlight_target = st.session_state.get('highlight_target', None)
+        
+        # Nếu có target, tự động chuyển view mode sang Highlight
+        if highlight_target:
+            view_mode = "Highlight Cầu" # Force view mode
+            # Có thể thêm nút xóa highlight
+            if st.button("❌ Xóa Highlight đang chọn"):
+                st.session_state.highlight_target = None
+                st.rerun()
 
         if view_mode == "Highlight Cầu":
             match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
@@ -364,6 +405,16 @@ def main():
                 for r_idx, c_name in pred_pos:
                     df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
 
+                # 4. TÔ MÀU HIGHLIGHT ĐẶC BIỆT (TỪ CLICK)
+                if highlight_target:
+                    # Target predict cell
+                    tr, tc = highlight_target['predict_pos']
+                    df_css.at[tr, tc] = f'background-color: #ff0000; color: white; font-weight: bold; border: 3px solid yellow'
+                    
+                    # Target pattern cells
+                    for pr, pc in highlight_target['cau_pos']:
+                        df_css.at[pr, pc] = f'background-color: #ff0000; color: white; border: 2px solid yellow'
+
                 return df_css
 
             st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
@@ -371,8 +422,16 @@ def main():
             st.dataframe(df, height=600, use_container_width=True)
 
     # --- TAB 2: THỐNG KÊ ---
-    with tab2:
-        st.subheader(f"Thống kê: {selected_step_label}")
+    elif active_tab == "📈 Thống kê mức số":
+        # Cần tính toán lại results nếu chưa có (vì scan_cau nằm trong if Tab 1)
+        # Tuy nhiên, để tối ưu, ta nên gọi scan_cau ở ngoài if tabs
+        results, cau_pos, pred_pos = scan_cau(
+            df, patterns, num_patterns, exact_match, 
+            is_year_data, pattern_months, selected_month, 
+            target_step=None # Ở tab thống kê luôn hiện tất cả
+        )
+
+        st.subheader("Thống kê: Tất cả các cách")
         
         col_left, col_right = st.columns([1, 1])
         final_pairs_bag = []
@@ -385,7 +444,16 @@ def main():
             for key, data in results.items():
                 with st.expander(f"{key} ({data['count']} cầu)", expanded=True):
                     if data['count'] > 0:
-                        st.write(f"Giá trị: {', '.join(data['values'])}")
+                        # Display buttons for each value
+                        cols = st.columns(8) # Grid layout for buttons
+                        for idx, item in enumerate(data['items']):
+                            val = item['value']
+                            with cols[idx % 8]:
+                                if st.button(val, key=f"btn_{key}_{idx}"):
+                                    st.session_state.highlight_target = item
+                                    st.session_state.active_tab = "📊 Dữ liệu & Cầu"
+                                    st.rerun()
+                        
                         if st.checkbox(f"Gộp {key}", value=True, key=f"chk_{key}"):
                             final_pairs_bag.extend(data['pairs'])
                     else:
@@ -420,7 +488,7 @@ def main():
             st.text_area("Copy kết quả:", value=levels_text, height=300)
 
     # --- TAB 3: KIỂM TRA SỐ ---
-    with tab3:
+    elif active_tab == "🔍 Kiểm tra số":
         st.subheader("Kiểm tra mức độ xuất hiện của một số")
         check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
         
@@ -428,8 +496,15 @@ def main():
             if not check_num.isdigit() or len(check_num) != 2:
                 st.error("Vui lòng nhập 2 chữ số.")
             else:
+                # Cần tính toán lại results
+                results, cau_pos, pred_pos = scan_cau(
+                    df, patterns, num_patterns, exact_match, 
+                    is_year_data, pattern_months, selected_month, 
+                    target_step=None
+                )
+
                 data_check = []
-                steps_to_check = range(6) if target_step is None else [target_step]
+                steps_to_check = range(6)
                 
                 for step in steps_to_check:
                     key_down = f"Trên xuống (↓) - Cách {step}"
