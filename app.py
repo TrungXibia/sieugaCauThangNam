@@ -360,67 +360,6 @@ def main():
             if st.button("❌ Xóa Highlight đang chọn"):
                 st.session_state.highlight_target = None
                 st.rerun()
-
-        if view_mode == "Highlight Cầu":
-            match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
-            st.caption(f"Chế độ: {match_text} | {selected_step_label}")
-            
-            # HÀM STYLE ĐÃ ĐƯỢC KHÔI PHỤC CHO PASTEL & FIX LỖI HIỂN THỊ DARK MODE
-            def highlight_cells(x):
-                df_css = pd.DataFrame('', index=x.index, columns=x.columns)
-                
-                # 0. TÔ MÀU NỀN (PATTERN MATCHING) - Thêm color: black
-                for col in x.columns:
-                    if col == 'Ngày': continue
-                    col_data = x[col]
-                    for idx, val in col_data.items():
-                        val_str = str(val)
-                        for p_i in range(len(patterns)-1, -1, -1):
-                            if matches_last_two_digits(val_str, patterns[p_i], exact_match):
-                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}; color: black'
-                                break
-                
-                # 1. TÔ MÀU CỘT NGUỒN (INPUT) - Thêm color: black
-                if is_year_data:
-                    cur_d, cur_c = row_idx, selected_month
-                    for i in range(num_patterns):
-                         pd_idx, pc_idx = get_prev_cell_year(df, cur_d, cur_c)
-                         if pd_idx >= 0:
-                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[i % len(COLORS)]}; color: black'
-                             cur_d, cur_c = pd_idx, pc_idx
-                else:
-                    y_col = str(datetime.now().year)
-                    if y_col in df.columns:
-                        for i in range(1, num_patterns + 1):
-                            idx = row_idx - i
-                            if idx >= 0:
-                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}; color: black'
-
-                # 2. TÔ MÀU CẦU (Cầu nối) - Thêm color: black
-                for r_idx, c_name in cau_pos:
-                    if (r_idx, c_name) not in pred_pos:
-                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}; color: black'
-                
-                # 3. TÔ MÀU DỰ ĐOÁN - Giữ nguyên color: white
-                for r_idx, c_name in pred_pos:
-                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
-
-                # 4. TÔ MÀU HIGHLIGHT ĐẶC BIỆT (TỪ CLICK)
-                if highlight_target:
-                    # Target predict cell
-                    tr, tc = highlight_target['predict_pos']
-                    df_css.at[tr, tc] = f'background-color: #ff0000; color: white; font-weight: bold; border: 3px solid yellow'
-                    
-                    # Target pattern cells
-                    for pr, pc in highlight_target['cau_pos']:
-                        df_css.at[pr, pc] = f'background-color: #ff0000; color: white; border: 2px solid yellow'
-
-                return df_css
-
-            st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
-        else:
-            st.dataframe(df, height=600, use_container_width=True)
-
     # --- TAB 2: THỐNG KÊ ---
     elif active_tab == "📈 Thống kê mức số":
         # Cần tính toán lại results nếu chưa có (vì scan_cau nằm trong if Tab 1)
