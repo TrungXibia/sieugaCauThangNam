@@ -298,12 +298,206 @@ def main():
     st.sidebar.text("Kiểu so khớp:")
     st.sidebar.checkbox("Chính xác mẫu (đúng thứ tự)", key='exact_match_state', on_change=toggle_exact_match)
     st.sidebar.checkbox("Có chứa (Kép cần 1, Lệch cần 2)", key='contains_both_state', on_change=toggle_contains_both)
+def get_prev_cell_year(df, row_idx, col_name):
+    if row_idx > 0:
+        return row_idx - 1, col_name
+    
+    if not col_name.startswith("TH"): return -1, None
+    m = int(col_name[2:])
+    pm = 12 if m == 1 else m - 1
+    pcol = f"TH{pm}"
+    
+    if pcol not in df.columns: return -1, None
+    col_data = df[pcol]
+    for r in range(len(col_data)-1, -1, -1):
+        if col_data.iloc[r] != '':
+            return r, pcol
+    return -1, pcol
+
+# =============================================================================
+# LOGIC TÌM CẦU
+# =============================================================================
+
+def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
+    patterns = []
+    pattern_months = set()
+    
+    if is_year_data:
+        cur_day, cur_col = row_idx, col_name
+        for _ in range(num_patterns):
+            p_day, p_col = get_prev_cell_year(df, cur_day, cur_col)
+            if p_day < 0 or not p_col:
+                patterns.append('')
+            else:
+                val = df.iloc[p_day][p_col]
+                patterns.append(val[-2:] if len(val) >= 2 else '')
+                pattern_months.add(p_col)
+                cur_day, cur_col = p_day, p_col
+    else:
+        year_col = str(datetime.now().year)
+        col_to_use = year_col if year_col in df.columns else df.columns[-1]
+        for i in range(1, num_patterns + 1):
+            idx = row_idx - i
+            if idx >= 0:
+                val = df.iloc[idx][col_to_use]
+                patterns.append(val[-2:] if len(val) >= 2 else '')
+            else:
+                patterns.append('')
+                
+    patterns.reverse()
+    return patterns, pattern_months
+
+def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month, target_step=None):
+    results = {}
+    cau_positions = set()
+    predict_positions = set()
+    
+    ignore_cols = ['Ngày']
+    if is_year_data:
+        search_cols = [c for c in df.columns if c not in pattern_months and c not in ignore_cols and c != selected_month]
+    else:
+        current_year_col = str(datetime.now().year)
+        search_cols = [c for c in df.columns if c != current_year_col and c not in ignore_cols]
+
+    directions = [("Trên xuống (↓)", True), ("Dưới lên (↑)", False)]
+
+    for step in range(6):
+        if target_step is not None and step != target_step:
+            continue
+
+        gap = step + 1
+        for dir_label, inside in directions:
+            count = 0
+            result_vals = [] # Now stores dicts: {'value': val, 'predict_pos': (r,c), 'cau_pos': [(r,c),...]}
+            key = f"{dir_label} - Cách {step}"
+            
+            for col in search_cols:
+                for i in range(len(df)):
+                    if inside: 
+                        if i <= len(df) - num_patterns * gap:
+                            ok = True
+                            positions_temp = []
+                            for k in range(num_patterns):
+                                val = df.iloc[i + k*gap][col]
+                                if not matches_last_two_digits(val, patterns[k], exact_match):
+                                    ok = False; break
+                                positions_temp.append((i + k*gap, col))
+                            
+                            if ok:
+                                pred_idx = i + (num_patterns - 1)*gap + gap
+                                if 0 <= pred_idx < len(df):
+                                    pred_val = df.iloc[pred_idx][col]
+                                    if pred_val:
+                                        count += 1
+                                    # result_vals.append(pred_val) # OLD
+                                    result_vals.append({
+                                        'value': pred_val,
+                                        'predict_pos': (pred_idx, col),
+                                        'cau_pos': positions_temp
+                                    })
+                                    cau_positions.update(positions_temp)
+                                    predict_positions.add((pred_idx, col))
+                    else: 
+                        if i >= (num_patterns - 1) * gap:
+                            ok = True
+                            positions_temp = []
+                            for k in range(num_patterns):
+                                val = df.iloc[i - k*gap][col]
+                                if not matches_last_two_digits(val, patterns[k], exact_match):
+                                    ok = False; break
+                                positions_temp.append((i - k*gap, col))
+                                
+                            if ok:
+                                pred_idx = i - (num_patterns - 1)*gap - gap
+                                if 0 <= pred_idx < len(df):
+                                    pred_val = df.iloc[pred_idx][col]
+                                    if pred_val:
+                                        count += 1
+                                    # result_vals.append(pred_val) # OLD
+                                    result_vals.append({
+                                        'value': pred_val,
+                                        'predict_pos': (pred_idx, col),
+                                        'cau_pos': positions_temp
+                                    })
+                                    cau_positions.update(positions_temp)
+                                    predict_positions.add((pred_idx, col))
+            
+            pairs = []
+            for item in result_vals:
+                val = item['value']
+                if len(val) >= 2: 
+                    digits = list(val)
+                    local_pairs = [a+b for a in digits for b in digits]
+                    pairs.extend(local_pairs)
+
+            results[key] = {
+                'count': count,
+                'items': result_vals, # Changed from 'values' to 'items' which contains dicts
+                'pairs': pairs
+            }
+
+    return results, cau_positions, predict_positions
+
+# =============================================================================
+# GIAO DIỆN CHÍNH
+# =============================================================================
+
+def main():
+    if 'exact_match_state' not in st.session_state:
+        st.session_state.exact_match_state = False
+    if 'contains_both_state' not in st.session_state:
+        st.session_state.contains_both_state = True
+
+    def toggle_exact_match():
+        if st.session_state.exact_match_state:
+            st.session_state.contains_both_state = False
+
+    def toggle_contains_both():
+        if st.session_state.contains_both_state:
+            st.session_state.exact_match_state = False
+
+    # --- SIDEBAR ---
+    st.sidebar.title("⚙️ Điều khiển")
+    
+    data_mode = st.sidebar.radio("Chế độ dữ liệu", ["Tháng", "Năm"])
+    is_year_data = (data_mode == "Năm")
+    
+    if st.sidebar.button("🔄 Lấy dữ liệu mới"):
+        st.cache_data.clear()
+        st.rerun()
+
+    df = fetch_data('year' if is_year_data else 'month')
+    
+    if df is None:
+        st.warning("Chưa có dữ liệu. Vui lòng tải lại.")
+        return
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Cấu hình tìm cầu")
+    
+    days = [str(i) for i in range(1, len(df) + 1)]
+    selected_day = st.sidebar.selectbox("Chọn ngày", days, index=len(days)-1)
+    row_idx = int(selected_day) - 1
+    
+    selected_month = None
+    if is_year_data:
+        months = [c for c in df.columns if c.startswith("TH")]
+        cur_m_idx = datetime.now().month - 1
+        if cur_m_idx < len(months):
+             def_m = months[cur_m_idx]
+        else: def_m = months[0]
+        selected_month = st.sidebar.selectbox("Chọn cột tháng (để lấy mẫu)", months, index=months.index(def_m) if def_m in months else 0)
+    
+    num_patterns = st.sidebar.number_input("Số ngày chạy cầu", min_value=1, max_value=5, value=2)
+    
+    st.sidebar.text("Kiểu so khớp:")
+    st.sidebar.checkbox("Chính xác mẫu (đúng thứ tự)", key='exact_match_state', on_change=toggle_exact_match)
+    st.sidebar.checkbox("Có chứa (Kép cần 1, Lệch cần 2)", key='contains_both_state', on_change=toggle_contains_both)
     
     exact_match = st.session_state.exact_match_state
 
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
     patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
-    
     st.sidebar.markdown("#### Mẫu hiện tại:")
     for i, p in enumerate(patterns):
         st.sidebar.code(f"Mẫu {i+1}: {p}")
@@ -337,7 +531,23 @@ def main():
             st.subheader(f"Bảng kết quả ({data_mode})")
         with col2:
             step_options = ["Tất cả các cách"] + [f"Cách {i}" for i in range(6)]
-            selected_step_label = st.selectbox("Chọn cách soi", step_options)
+            
+            # Khởi tạo session state cho index nếu chưa có
+            if 'selected_step_index' not in st.session_state:
+                st.session_state.selected_step_index = 0
+
+            # Callback cập nhật index
+            def on_step_change():
+                st.session_state.selected_step_index = step_options.index(st.session_state.step_selectbox)
+
+            selected_step_label = st.selectbox(
+                "Chọn cách soi", 
+                step_options, 
+                index=st.session_state.selected_step_index,
+                key='step_selectbox',
+                on_change=on_step_change
+            )
+            
             target_step = None
             if selected_step_label != "Tất cả các cách":
                 target_step = int(selected_step_label.split(" ")[1])
@@ -360,17 +570,92 @@ def main():
             if st.button("❌ Xóa Highlight đang chọn"):
                 st.session_state.highlight_target = None
                 st.rerun()
+
+        if view_mode == "Highlight Cầu":
+            match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
+            st.caption(f"Chế độ: {match_text} | {selected_step_label}")
+            
+            # HÀM STYLE ĐÃ ĐƯỢC KHÔI PHỤC CHO PASTEL & FIX LỖI HIỂN THỊ DARK MODE
+            def highlight_cells(x):
+                df_css = pd.DataFrame('', index=x.index, columns=x.columns)
+                
+                # Nếu đang highlight 1 cầu cụ thể, ta sẽ làm mờ/bỏ qua các màu khác để cầu này nổi bật nhất
+                if highlight_target:
+                    # 4. TÔ MÀU HIGHLIGHT ĐẶC BIỆT (TỪ CLICK)
+                    # Target predict cell
+                    tr, tc = highlight_target['predict_pos']
+                    df_css.at[tr, tc] = f'background-color: #FF0000; color: #FFFF00; font-weight: bold; border: 3px solid #FFFF00'
+                    
+                    # Target pattern cells
+                    for pr, pc in highlight_target['cau_pos']:
+                        df_css.at[pr, pc] = f'background-color: #FF4500; color: white; font-weight: bold; border: 2px solid #FFFF00'
+                    
+                    return df_css
+
+                # --- CHẾ ĐỘ BÌNH THƯỜNG (Không chọn cầu cụ thể) ---
+
+                # 0. TÔ MÀU NỀN (PATTERN MATCHING) - Thêm color: black
+                for col in x.columns:
+                    if col == 'Ngày': continue
+                    col_data = x[col]
+                    for idx, val in col_data.items():
+                        val_str = str(val)
+                        for p_i in range(len(patterns)-1, -1, -1):
+                            if matches_last_two_digits(val_str, patterns[p_i], exact_match):
+                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}; color: black'
+                                break
+                
+                # 1. TÔ MÀU CỘT NGUỒN (INPUT) - Thêm color: black
+                if is_year_data:
+                    cur_d, cur_c = row_idx, selected_month
+                    for i in range(num_patterns):
+                         pd_idx, pc_idx = get_prev_cell_year(df, cur_d, cur_c)
+                         if pd_idx >= 0:
+                             df_css.at[pd_idx, pc_idx] = f'background-color: {COLORS[(num_patterns-1-i) % len(COLORS)]}; color: black'
+                             cur_d, cur_c = pd_idx, pc_idx
+                else:
+                    y_col = str(datetime.now().year)
+                    if y_col in df.columns:
+                        for i in range(1, num_patterns + 1):
+                            idx = row_idx - i
+                            if idx >= 0:
+                                df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}; color: black'
+
+                # 2. TÔ MÀU CẦU (Cầu nối) - Thêm color: black
+                for r_idx, c_name in cau_pos:
+                    if (r_idx, c_name) not in pred_pos:
+                        df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}; color: black'
+                
+                # 3. TÔ MÀU DỰ ĐOÁN - Giữ nguyên color: white
+                for r_idx, c_name in pred_pos:
+                    df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
+
+                return df_css
+
+            st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
+        else:
+            st.dataframe(df, height=600, use_container_width=True)
+
     # --- TAB 2: THỐNG KÊ ---
     elif active_tab == "📈 Thống kê mức số":
+        # Lấy lại lựa chọn từ session state hoặc mặc định
+        step_options = ["Tất cả các cách"] + [f"Cách {i}" for i in range(6)]
+        current_idx = st.session_state.get('selected_step_index', 0)
+        selected_step_label = step_options[current_idx]
+        
+        target_step = None
+        if selected_step_label != "Tất cả các cách":
+            target_step = int(selected_step_label.split(" ")[1])
+
         # Cần tính toán lại results nếu chưa có (vì scan_cau nằm trong if Tab 1)
         # Tuy nhiên, để tối ưu, ta nên gọi scan_cau ở ngoài if tabs
         results, cau_pos, pred_pos = scan_cau(
             df, patterns, num_patterns, exact_match, 
             is_year_data, pattern_months, selected_month, 
-            target_step=None # Ở tab thống kê luôn hiện tất cả
+            target_step=target_step 
         )
 
-        st.subheader("Thống kê: Tất cả các cách")
+        st.subheader(f"Thống kê: {selected_step_label}")
         
         col_left, col_right = st.columns([1, 1])
         final_pairs_bag = []
