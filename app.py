@@ -373,24 +373,6 @@ def main():
         else:
             st.sidebar.code(f"Mẫu {i+1}: {p}")
 
-    # Thu thập số dự đoán tiếp theo
-    results_preview, _, _ = scan_cau(
-        df, patterns, num_patterns, exact_match, 
-        is_year_data, pattern_months, selected_month, 
-        target_step=None, allow_reverse=allow_reverse
-    )
-    
-    # Lấy 2 số cuối từ tất cả kết quả
-    predicted_numbers = set()
-    for key, data in results_preview.items():
-        for item in data['items']:
-            val = item['value']
-            if len(val) >= 2:
-                last_two = val[-2:]
-                predicted_numbers.add(last_two)
-                if allow_reverse and last_two[0] != last_two[1]:
-                    predicted_numbers.add(last_two[::-1])
-
     # --- TABS ---
     if 'active_tab' not in st.session_state:
         st.session_state.active_tab = "📊 Dữ liệu & Cầu"
@@ -412,18 +394,6 @@ def main():
 
     # --- TAB 1 ---
     if active_tab == "📊 Dữ liệu & Cầu":
-        # Hiển thị số dự đoán ở đầu
-        if predicted_numbers:
-            st.markdown("### 🎯 Số dự đoán tiếp theo:")
-            sorted_predictions = sorted(list(predicted_numbers))
-            predictions_text = ', '.join(sorted_predictions)
-            st.text_area(
-                f"Tổng: {len(predicted_numbers)} số", 
-                value=predictions_text, 
-                height=100
-            )
-            st.markdown("---")
-        
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
@@ -449,6 +419,36 @@ def main():
                 target_step = int(selected_step_label.split(" ")[1])
         with col3:
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
+
+        # Tính toán số dự đoán theo cách đã chọn
+        results_for_prediction, _, _ = scan_cau(
+            df, patterns, num_patterns, exact_match, 
+            is_year_data, pattern_months, selected_month, 
+            target_step=target_step, allow_reverse=allow_reverse
+        )
+        
+        # Lấy 2 số cuối từ kết quả theo cách đã chọn
+        predicted_numbers_filtered = set()
+        for key, data in results_for_prediction.items():
+            for item in data['items']:
+                val = item['value']
+                if len(val) >= 2:
+                    last_two = val[-2:]
+                    predicted_numbers_filtered.add(last_two)
+                    if allow_reverse and last_two[0] != last_two[1]:
+                        predicted_numbers_filtered.add(last_two[::-1])
+        
+        # Hiển thị số dự đoán ở đầu
+        if predicted_numbers_filtered:
+            st.markdown(f"### 🎯 Số dự đoán tiếp theo ({selected_step_label}):")
+            sorted_predictions = sorted(list(predicted_numbers_filtered))
+            predictions_text = ', '.join(sorted_predictions)
+            st.text_area(
+                f"Tổng: {len(predicted_numbers_filtered)} số", 
+                value=predictions_text, 
+                height=100
+            )
+            st.markdown("---")
 
         results, cau_pos, pred_pos = scan_cau(
             df, patterns, num_patterns, exact_match, 
