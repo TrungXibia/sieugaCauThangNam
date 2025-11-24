@@ -280,8 +280,16 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
+    # Lấy ngày hiện tại từ hệ thống
+    current_day = datetime.now().day
     days = [str(i) for i in range(1, len(df) + 1)]
-    selected_day = st.sidebar.selectbox("Chọn ngày", days, index=len(days)-1)
+    
+    # Tìm index của ngày hiện tại, nếu không có thì dùng ngày cuối
+    default_index = len(days) - 1  # Mặc định là ngày cuối
+    if str(current_day) in days:
+        default_index = days.index(str(current_day))
+    
+    selected_day = st.sidebar.selectbox("Chọn ngày", days, index=default_index)
     row_idx = int(selected_day) - 1
     
     selected_month = None
@@ -475,8 +483,16 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
+    # Lấy ngày hiện tại từ hệ thống
+    current_day = datetime.now().day
     days = [str(i) for i in range(1, len(df) + 1)]
-    selected_day = st.sidebar.selectbox("Chọn ngày", days, index=len(days)-1)
+    
+    # Tìm index của ngày hiện tại, nếu không có thì dùng ngày cuối
+    default_index = len(days) - 1  # Mặc định là ngày cuối
+    if str(current_day) in days:
+        default_index = days.index(str(current_day))
+    
+    selected_day = st.sidebar.selectbox("Chọn ngày", days, index=default_index)
     row_idx = int(selected_day) - 1
     
     selected_month = None
