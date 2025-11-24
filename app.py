@@ -107,13 +107,18 @@ def matches_last_two_digits(value, pattern, exact=False):
 def matches_by_position(value, pattern, position_range):
     """
     So khớp theo vị trí chính xác trong số 5 chữ số.
+    Sử dụng logic "có chứa" - tức là 03 khớp cả 03 và 30.
+    NHƯNG các chữ số phải liền kề nhau theo đúng thứ tự trong vị trí đã chọn.
+    
     Args:
         value: Giá trị cần kiểm tra (string hoặc số)
         pattern: Mẫu cần so khớp (string)
         position_range: Tuple (start, end) - vị trí bắt đầu và kết thúc (1-indexed)
     Returns:
         True nếu khớp, False nếu không
-    Ví dụ: matches_by_position('05554', '04', (1, 5)) -> True (vị trí 1='0', vị trí 5='4' -> '04')
+    Ví dụ: 
+        - matches_by_position('55230', '03', (4, 5)) -> True (vị trí 4-5='30', chứa '0' và '3')
+        - matches_by_position('53940', '04', (4, 5)) -> True (vị trí 4-5='40', chứa '0' và '4')
     """
     val_str = str(value).strip()
     if not val_str or not pattern:
@@ -124,10 +129,25 @@ def matches_by_position(value, pattern, position_range):
         return False
     
     start_pos, end_pos = position_range
-    # Chuyển từ 1-indexed sang 0-indexed
+    # Chuyển từ 1-indexed sang 0-indexed và lấy chuỗi liền kề
     extracted = val_str[start_pos-1:end_pos]
     
-    return extracted == pattern
+    # Sử dụng logic "có chứa" giống như matches_last_two_digits
+    if not extracted or len(extracted) != len(pattern):
+        return False
+    
+    # Nếu là số kép (ví dụ: 00, 11, 22...)
+    if len(pattern) >= 2 and all(c == pattern[0] for c in pattern):
+        return all(c == pattern[0] for c in extracted)
+    
+    # Kiểm tra có chứa tất cả các chữ số trong pattern không (cho phép đảo)
+    temp_val = extracted
+    for char in pattern:
+        if char in temp_val:
+            temp_val = temp_val.replace(char, "", 1)
+        else:
+            return False
+    return True
 
 def get_prev_cell_year(df, row_idx, col_name):
     if row_idx > 0:
@@ -380,7 +400,7 @@ def main():
         st.sidebar.markdown("**Chọn vị trí:**")
         col_pos1, col_pos2 = st.sidebar.columns(2)
         with col_pos1:
-            start_pos = st.number_input("Từ vị trí", min_value=1, max_value=5, value=1, key='start_pos')
+            start_pos = st.number_input("Từ vị trí", min_value=1, max_value=5, value=4, key='start_pos')
         with col_pos2:
             end_pos = st.number_input("Đến vị trí", min_value=1, max_value=5, value=5, key='end_pos')
         
@@ -469,7 +489,7 @@ def main():
 
         if view_mode == "Highlight Cầu":
             if position_match and position_range:
-                match_text = f"Chính xác theo vị trí {position_range[0]}-{position_range[1]}"
+                match_text = f"Chính xác theo vị trí {position_range[0]}-{position_range[1]} (có thể đảo)"
             else:
                 match_text = "Chính xác 2 số cuối" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
             st.caption(f"Chế độ: {match_text} | {selected_step_label}")
