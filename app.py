@@ -83,15 +83,10 @@ def fetch_data(type_data='month'):
 
 # --- HÀM SO KHỚP ---
 def find_pattern_position(value, pattern, allow_reverse=False):
-    """
-    Tìm vị trí của pattern trong value (quét từ trái sang phải).
-    Returns: vị trí bắt đầu (0-indexed) hoặc -1 nếu không tìm thấy
-    """
     val_str = str(value).strip()
     if not val_str or not pattern or len(pattern) != 2:
         return -1
     
-    # Tạo danh sách mẫu cần tìm
     patterns_to_check = [pattern]
     if allow_reverse and pattern[0] != pattern[1]:
         patterns_to_check.append(pattern[::-1])
@@ -102,9 +97,6 @@ def find_pattern_position(value, pattern, allow_reverse=False):
     return -1
 
 def matches_last_two_digits(value, pattern, exact=False, position=None, allow_reverse=False):
-    """
-    So khớp pattern với value.
-    """
     val_str = str(value).strip()
     if not val_str or not pattern:
         return False
@@ -398,19 +390,6 @@ def main():
                 predicted_numbers.add(last_two)
                 if allow_reverse and last_two[0] != last_two[1]:
                     predicted_numbers.add(last_two[::-1])
-    
-    if predicted_numbers:
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("#### 🎯 Số dự đoán tiếp theo:")
-        sorted_predictions = sorted(list(predicted_numbers))
-        predictions_text = ', '.join(sorted_predictions)
-        st.sidebar.text_area(
-            "Danh sách số dự đoán:", 
-            value=predictions_text, 
-            height=150,
-            label_visibility="collapsed"
-        )
-        st.sidebar.caption(f"Tổng: {len(predicted_numbers)} số")
 
     # --- TABS ---
     if 'active_tab' not in st.session_state:
@@ -433,6 +412,18 @@ def main():
 
     # --- TAB 1 ---
     if active_tab == "📊 Dữ liệu & Cầu":
+        # Hiển thị số dự đoán ở đầu
+        if predicted_numbers:
+            st.markdown("### 🎯 Số dự đoán tiếp theo:")
+            sorted_predictions = sorted(list(predicted_numbers))
+            predictions_text = ', '.join(sorted_predictions)
+            st.text_area(
+                f"Tổng: {len(predicted_numbers)} số", 
+                value=predictions_text, 
+                height=100
+            )
+            st.markdown("---")
+        
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             st.subheader(f"Bảng kết quả ({data_mode})")
