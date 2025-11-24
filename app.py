@@ -62,66 +62,6 @@ def fetch_data(type_data='month'):
                 'ctl00$ContentPlaceHolder1$btnXem': 'Xem'
             })
             r2 = sess.post(url, data=payload, timeout=10)
-            table_kw = 'TH1'
-
-        soup2 = BeautifulSoup(r2.text, 'lxml')
-        table = next(t for t in soup2.find_all('table') if t.find('tr') and table_kw in t.find('tr').get_text())
-        df = pd.read_html(StringIO(str(table)), header=0)[0].fillna('')
-        
-        def fmt(v, col_name):
-            s = str(v).strip()
-            if not s or s == '-----': return ''
-            if s.endswith('.0'): s = s[:-2]
-            if col_name == 'Ngày': return s
-            return s.zfill(5)
-        
-        df = df.apply(lambda col: col.map(lambda v: fmt(v, col.name)))
-        return df
-    except Exception as e:
-        st.error(f"Lỗi lấy dữ liệu: {e}")
-        return None
-
-# --- HÀM SO KHỚP ---
-def matches_last_two_digits(value, pattern, exact=False):
-    val_str = str(value).strip()
-    if not val_str or not pattern:
-        return False
-
-    if exact:
-        if len(val_str) < 2: return False
-        return val_str[-2:] == pattern
-    else:
-        # 1. KÉP
-        if pattern[0] == pattern[1]:
-            return pattern[0] in val_str
-        # 2. THƯỜNG
-        temp_val = val_str
-        for char in pattern:
-            if char in temp_val:
-                temp_val = temp_val.replace(char, "", 1)
-            else:
-                return False
-        return True
-
-def get_prev_cell_year(df, row_idx, col_name):
-    if row_idx > 0:
-        return row_idx - 1, col_name
-    
-    if not col_name.startswith("TH"): return -1, None
-    m = int(col_name[2:])
-    pm = 12 if m == 1 else m - 1
-    pcol = f"TH{pm}"
-    
-    if pcol not in df.columns: return -1, None
-    col_data = df[pcol]
-    for r in range(len(col_data)-1, -1, -1):
-        if col_data.iloc[r] != '':
-            return r, pcol
-    return -1, pcol
-
-# =============================================================================
-# LOGIC TÌM CẦU
-# =============================================================================
 
 def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
     patterns = []
