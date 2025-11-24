@@ -89,7 +89,7 @@ def matches_last_two_digits(value, pattern, exact=False):
         value: Giá trị cần kiểm tra (string hoặc số)
         pattern: Mẫu cần tìm (2 chữ số)
         exact: 
-            - True: Tìm 2 số liên tiếp bất kỳ từ trái sang phải (đúng thứ tự)
+            - True: Tìm 2 số liên tiếp bất kỳ (quét cả 2 chiều: trái→phải và phải→trái)
             - False: Có chứa (Kép cần 1, Lệch cần 2)
     """
     val_str = str(value).strip()
@@ -97,13 +97,21 @@ def matches_last_two_digits(value, pattern, exact=False):
         return False
 
     if exact:
-        # Tìm 2 số liên tiếp từ trái sang phải
+        # Tìm 2 số liên tiếp từ trái sang phải VÀ từ phải sang trái
         if len(pattern) != 2:
             return False
-        # Kiểm tra tất cả các cặp 2 số liên tiếp
+        
+        # Quét từ trái sang phải
         for i in range(len(val_str) - 1):
             if val_str[i:i+2] == pattern:
                 return True
+        
+        # Quét từ phải sang trái (đảo ngược pattern)
+        reversed_pattern = pattern[::-1]
+        for i in range(len(val_str) - 1):
+            if val_str[i:i+2] == reversed_pattern:
+                return True
+        
         return False
     else:
         # 1. KÉP
@@ -390,7 +398,7 @@ def main():
                 st.rerun()
 
         if view_mode == "Highlight Cầu":
-            match_text = "Chính xác 2 số liên tiếp (từ trái sang phải)" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
+            match_text = "Chính xác 2 số liên tiếp (quét 2 chiều ⇄)" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
             st.caption(f"Chế độ: {match_text} | {selected_step_label}")
             
             def highlight_cells(x):
