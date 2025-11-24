@@ -83,15 +83,10 @@ def fetch_data(type_data='month'):
 
 # --- HÀM SO KHỚP ---
 def find_pattern_position(value, pattern, allow_reverse=False):
-    """
-    Tìm vị trí của pattern trong value (quét từ trái sang phải).
-    Returns: vị trí bắt đầu (0-indexed) hoặc -1 nếu không tìm thấy
-    """
     val_str = str(value).strip()
     if not val_str or not pattern or len(pattern) != 2:
         return -1
     
-    # Tạo danh sách mẫu cần tìm
     patterns_to_check = [pattern]
     if allow_reverse and pattern[0] != pattern[1]:
         patterns_to_check.append(pattern[::-1])
@@ -102,9 +97,6 @@ def find_pattern_position(value, pattern, allow_reverse=False):
     return -1
 
 def matches_last_two_digits(value, pattern, exact=False, position=None, allow_reverse=False):
-    """
-    So khớp pattern với value.
-    """
     val_str = str(value).strip()
     if not val_str or not pattern:
         return False
@@ -243,7 +235,8 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                     result_vals.append({
                                         'value': pred_val,
                                         'predict_pos': (pred_idx, col),
-                                        'cau_pos': positions_temp
+                                        'cau_pos': positions_temp,
+                                        'match_position': fixed_position if exact_match else None
                                     })
                                     cau_positions.update(positions_temp)
                                     predict_positions.add((pred_idx, col))
@@ -282,7 +275,8 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                     result_vals.append({
                                         'value': pred_val,
                                         'predict_pos': (pred_idx, col),
-                                        'cau_pos': positions_temp
+                                        'cau_pos': positions_temp,
+                                        'match_position': fixed_position if exact_match else None
                                     })
                                     cau_positions.update(positions_temp)
                                     predict_positions.add((pred_idx, col))
@@ -290,10 +284,13 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
             pairs = []
             for item in result_vals:
                 val = item['value']
-                if len(val) >= 2: 
-                    digits = list(val)
-                    local_pairs = [a+b for a in digits for b in digits]
-                    pairs.extend(local_pairs)
+                pos = item.get('match_position')
+                # Nếu có vị trí khớp (chế độ chính xác), lấy 2 số tại vị trí đó
+                if pos is not None and 0 <= pos < len(val) - 1:
+                    pairs.append(val[pos:pos+2])
+                # Nếu không (chế độ thường), lấy 2 số cuối
+                elif len(val) >= 2: 
+                    pairs.append(val[-2:])
 
             results[key] = {
                 'count': count,
@@ -342,11 +339,29 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
-    current_day = datetime.now().day
+    # Lấy ngày và giờ hiện tại
+    current_datetime = datetime.now()
+    current_day = current_datetime.day
+    current_hour = current_datetime.hour
+    current_minute = current_datetime.minute
+    
     days = [str(i) for i in range(1, len(df) + 1)]
     
+    # Nếu sau 18h30, chọn ngày tiếp theo
+    if current_hour > 18 or (current_hour == 18 and current_minute >= 30):
+        default_day = current_day + 1
+    else:
+        default_day = current_day
+    
+    # Đảm bảo ngày mặc định không vượt quá số ngày có trong dữ liệu
+    if default_day > len(days):
+        default_day = len(days)
+    
+    # Tìm index của ngày mặc định
     default_index = len(days) - 1
-    if str(current_day) in days:
+    if str(default_day) in days:
+        default_index = days.index(str(default_day))
+    elif str(current_day) in days:
         default_index = days.index(str(current_day))
     
     selected_day = st.sidebar.selectbox("Chọn ngày", days, index=default_index)
@@ -380,37 +395,6 @@ def main():
             st.sidebar.code(f"Mẫu {i+1}: {p} hoặc {p[::-1]}")
         else:
             st.sidebar.code(f"Mẫu {i+1}: {p}")
-
-    # Thu thập số dự đoán tiếp theo
-    results_preview, _, _ = scan_cau(
-        df, patterns, num_patterns, exact_match, 
-        is_year_data, pattern_months, selected_month, 
-        target_step=None, allow_reverse=allow_reverse
-    )
-    
-    # Lấy 2 số cuối từ tất cả kết quả
-    predicted_numbers = set()
-    for key, data in results_preview.items():
-        for item in data['items']:
-            val = item['value']
-            if len(val) >= 2:
-                last_two = val[-2:]
-                predicted_numbers.add(last_two)
-                if allow_reverse and last_two[0] != last_two[1]:
-                    predicted_numbers.add(last_two[::-1])
-    
-    if predicted_numbers:
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("#### 🎯 Số dự đoán tiếp theo:")
-        sorted_predictions = sorted(list(predicted_numbers))
-        predictions_text = ', '.join(sorted_predictions)
-        st.sidebar.text_area(
-            "Danh sách số dự đoán:", 
-            value=predictions_text, 
-            height=150,
-            label_visibility="collapsed"
-        )
-        st.sidebar.caption(f"Tổng: {len(predicted_numbers)} số")
 
     # --- TABS ---
     if 'active_tab' not in st.session_state:
@@ -458,6 +442,39 @@ def main():
                 target_step = int(selected_step_label.split(" ")[1])
         with col3:
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
+
+        # Tính toán số dự đoán theo cách đã chọn
+        results_for_prediction, _, _ = scan_cau(
+            df, patterns, num_patterns, exact_match, 
+            is_year_data, pattern_months, selected_month, 
+            target_step=target_step, allow_reverse=allow_reverse
+        )
+        
+        # Lấy số dự đoán từ kết quả theo cách đã chọn
+        predicted_numbers_filtered = set()
+        for key, data in results_for_prediction.items():
+            for item in data['items']:
+                val = item['value']
+                pos = item.get('match_position')
+                
+                # Logic lấy số dự đoán
+                pred_pair = None
+                if pos is not None and 0 <= pos < len(val) - 1:
+                    pred_pair = val[pos:pos+2]
+                elif len(val) >= 2:
+                    pred_pair = val[-2:]
+                
+                if pred_pair:
+                    predicted_numbers_filtered.add(pred_pair)
+                    if allow_reverse and pred_pair[0] != pred_pair[1]:
+                        predicted_numbers_filtered.add(pred_pair[::-1])
+
+        # Hiển thị số dự đoán ở đầu
+        if predicted_numbers_filtered:
+            sorted_predictions = sorted(list(predicted_numbers_filtered))
+            predictions_text = ', '.join(sorted_predictions)
+            st.success(f"🎯 **Dự đoán ({selected_step_label}) - {len(predicted_numbers_filtered)} số:** {predictions_text}")
+            st.markdown("---")
 
         results, cau_pos, pred_pos = scan_cau(
             df, patterns, num_patterns, exact_match, 
@@ -643,4 +660,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
