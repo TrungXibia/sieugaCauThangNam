@@ -104,45 +104,31 @@ def find_pattern_position(value, pattern, allow_reverse=False):
 def matches_last_two_digits(value, pattern, exact=False, position=None, allow_reverse=False):
     """
     So khớp pattern với value.
-    Args:
-        value: Giá trị cần kiểm tra (string hoặc số)
-        pattern: Mẫu cần tìm (2 chữ số)
-        exact: 
-            - True: Quét toàn bộ số từ trái sang phải, tìm 2 số liên tiếp khớp mẫu
-            - False: Có chứa (Kép cần 1, Lệch cần 2)
-        position: Vị trí cố định cần kiểm tra (0-indexed), chỉ dùng khi exact=True
-        allow_reverse: Cho phép tìm cả mẫu đảo ngược (ví dụ: 30 và 03)
     """
     val_str = str(value).strip()
     if not val_str or not pattern:
         return False
 
     if exact:
-        # Quét toàn bộ số từ trái sang phải
         if len(pattern) != 2:
             return False
         
-        # Tạo danh sách mẫu cần tìm
         patterns_to_check = [pattern]
-        if allow_reverse and pattern[0] != pattern[1]:  # Không đảo nếu là số kép (11, 22, ...)
-            patterns_to_check.append(pattern[::-1])  # Thêm mẫu đảo
+        if allow_reverse and pattern[0] != pattern[1]:
+            patterns_to_check.append(pattern[::-1])
         
-        # Nếu có position cố định, chỉ kiểm tra ở vị trí đó
         if position is not None:
             if position < 0 or position >= len(val_str) - 1:
                 return False
             return val_str[position:position+2] in patterns_to_check
         
-        # Nếu không có position, tìm ở bất kỳ đâu
         for i in range(len(val_str) - 1):
             if val_str[i:i+2] in patterns_to_check:
                 return True
         return False
     else:
-        # 1. KÉP
         if pattern[0] == pattern[1]:
             return pattern[0] in val_str
-        # 2. THƯỜNG
         temp_val = val_str
         for char in pattern:
             if char in temp_val:
@@ -166,10 +152,6 @@ def get_prev_cell_year(df, row_idx, col_name):
         if col_data.iloc[r] != '':
             return r, pcol
     return -1, pcol
-
-# =============================================================================
-# LOGIC TÌM CẦU
-# =============================================================================
 
 def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
     patterns = []
@@ -230,20 +212,18 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                         if i <= len(df) - num_patterns * gap:
                             ok = True
                             positions_temp = []
-                            fixed_position = None  # Vị trí cố định cho chuỗi mẫu
+                            fixed_position = None
                             
                             for k in range(num_patterns):
                                 val = df.iloc[i + k*gap][col]
                                 
                                 if exact_match:
-                                    # Với mẫu đầu tiên, tìm vị trí
                                     if k == 0:
                                         fixed_position = find_pattern_position(val, patterns[k], allow_reverse)
                                         if fixed_position == -1:
                                             ok = False
                                             break
                                     else:
-                                        # Các mẫu tiếp theo phải ở cùng vị trí
                                         if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
                                             ok = False
                                             break
@@ -362,11 +342,9 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
-    # Lấy ngày hiện tại từ hệ thống
     current_day = datetime.now().day
     days = [str(i) for i in range(1, len(df) + 1)]
     
-    # Tìm index của ngày hiện tại, nếu không có thì dùng ngày cuối
     default_index = len(days) - 1
     if str(current_day) in days:
         default_index = days.index(str(current_day))
@@ -395,6 +373,7 @@ def main():
 
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
     patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
+    
     st.sidebar.markdown("#### Mẫu hiện tại:")
     for i, p in enumerate(patterns):
         if allow_reverse and p and p[0] != p[1]:
@@ -402,7 +381,38 @@ def main():
         else:
             st.sidebar.code(f"Mẫu {i+1}: {p}")
 
-    # --- TABS REPLACEMENT (NAVIGATION) ---
+    # Thu thập số dự đoán tiếp theo
+    results_preview, _, _ = scan_cau(
+        df, patterns, num_patterns, exact_match, 
+        is_year_data, pattern_months, selected_month, 
+        target_step=None, allow_reverse=allow_reverse
+    )
+    
+    # Lấy 2 số cuối từ tất cả kết quả
+    predicted_numbers = set()
+    for key, data in results_preview.items():
+        for item in data['items']:
+            val = item['value']
+            if len(val) >= 2:
+                last_two = val[-2:]
+                predicted_numbers.add(last_two)
+                if allow_reverse and last_two[0] != last_two[1]:
+                    predicted_numbers.add(last_two[::-1])
+    
+    if predicted_numbers:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("#### 🎯 Số dự đoán tiếp theo:")
+        sorted_predictions = sorted(list(predicted_numbers))
+        predictions_text = ', '.join(sorted_predictions)
+        st.sidebar.text_area(
+            "Danh sách số dự đoán:", 
+            value=predictions_text, 
+            height=150,
+            label_visibility="collapsed"
+        )
+        st.sidebar.caption(f"Tổng: {len(predicted_numbers)} số")
+
+    # --- TABS ---
     if 'active_tab' not in st.session_state:
         st.session_state.active_tab = "📊 Dữ liệu & Cầu"
     
@@ -481,7 +491,6 @@ def main():
                     
                     return df_css
 
-                # 0. TÔ MÀU NỀN (PATTERN MATCHING)
                 for col in x.columns:
                     if col == 'Ngày': continue
                     col_data = x[col]
@@ -492,7 +501,6 @@ def main():
                                 df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}; color: black'
                                 break
                 
-                # 1. TÔ MÀU CỘT NGUỒN (INPUT)
                 if is_year_data:
                     cur_d, cur_c = row_idx, selected_month
                     for i in range(num_patterns):
@@ -508,12 +516,10 @@ def main():
                             if idx >= 0:
                                 df_css.at[idx, y_col] = f'background-color: {COLORS[(num_patterns-i) % len(COLORS)]}; color: black'
 
-                # 2. TÔ MÀU CẦU (Cầu nối)
                 for r_idx, c_name in cau_pos:
                     if (r_idx, c_name) not in pred_pos:
                         df_css.at[r_idx, c_name] = f'background-color: {CAU_COLOR}; color: black'
                 
-                # 3. TÔ MÀU DỰ ĐOÁN
                 for r_idx, c_name in pred_pos:
                     df_css.at[r_idx, c_name] = f'background-color: {PREDICT_COLOR}; color: white; font-weight: bold'
 
@@ -523,7 +529,7 @@ def main():
         else:
             st.dataframe(df, height=600, use_container_width=True)
 
-    # --- TAB 2: THỐNG KÊ ---
+    # --- TAB 2 ---
     elif active_tab == "📈 Thống kê mức số":
         step_options = ["Tất cả các cách"] + [f"Cách {i}" for i in range(6)]
         current_idx = st.session_state.get('selected_step_index', 0)
@@ -594,7 +600,7 @@ def main():
             
             st.text_area("Copy kết quả:", value=levels_text, height=300)
 
-    # --- TAB 3: KIỂM TRA SỐ ---
+    # --- TAB 3 ---
     elif active_tab == "🔍 Kiểm tra số":
         st.subheader("Kiểm tra mức độ xuất hiện của một số")
         check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
