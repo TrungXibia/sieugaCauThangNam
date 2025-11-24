@@ -334,25 +334,11 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
-    # Lấy ngày và giờ hiện tại
-    current_datetime = datetime.now()
-    current_day = current_datetime.day
-    current_hour = current_datetime.hour
-    current_minute = current_datetime.minute
-    
+    current_day = datetime.now().day
     days = [str(i) for i in range(1, len(df) + 1)]
     
-    # Nếu sau 18h30, chọn ngày tiếp theo
-    if current_hour > 18 or (current_hour == 18 and current_minute >= 30):
-        default_day = current_day + 1
-    else:
-        default_day = current_day
-    
-    # Tìm index của ngày mặc định
-    default_index = len(days) - 1  # Mặc định là ngày cuối
-    if str(default_day) in days:
-        default_index = days.index(str(default_day))
-    elif str(current_day) in days:
+    default_index = len(days) - 1
+    if str(current_day) in days:
         default_index = days.index(str(current_day))
     
     selected_day = st.sidebar.selectbox("Chọn ngày", days, index=default_index)
