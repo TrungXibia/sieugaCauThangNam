@@ -91,59 +91,6 @@ def find_pattern_position(value, pattern):
     if not val_str or not pattern or len(pattern) != 2:
         return -1
     
-    for i in range(len(val_str) - 1):
-        if val_str[i:i+2] == pattern:
-            return i
-    return -1
-
-def matches_last_two_digits(value, pattern, exact=False, position=None):
-    """
-    So khớp pattern với value.
-    Args:
-        value: Giá trị cần kiểm tra (string hoặc số)
-        pattern: Mẫu cần tìm (2 chữ số)
-        exact: 
-            - True: Quét toàn bộ số từ trái sang phải, tìm 2 số liên tiếp khớp mẫu
-            - False: Có chứa (Kép cần 1, Lệch cần 2)
-        position: Vị trí cố định cần kiểm tra (0-indexed), chỉ dùng khi exact=True
-    """
-    val_str = str(value).strip()
-    if not val_str or not pattern:
-        return False
-
-    if exact:
-        # Quét toàn bộ số từ trái sang phải
-        if len(pattern) != 2:
-            return False
-        
-        # Nếu có position cố định, chỉ kiểm tra ở vị trí đó
-        if position is not None:
-            if position < 0 or position >= len(val_str) - 1:
-                return False
-            return val_str[position:position+2] == pattern
-        
-        # Nếu không có position, tìm ở bất kỳ đâu
-        for i in range(len(val_str) - 1):
-            if val_str[i:i+2] == pattern:
-                return True
-        return False
-    else:
-        # 1. KÉP
-        if pattern[0] == pattern[1]:
-            return pattern[0] in val_str
-        # 2. THƯỜNG
-        temp_val = val_str
-        for char in pattern:
-            if char in temp_val:
-                temp_val = temp_val.replace(char, "", 1)
-            else:
-                return False
-        return True
-
-def get_prev_cell_year(df, row_idx, col_name):
-    if row_idx > 0:
-        return row_idx - 1, col_name
-    
     if not col_name.startswith("TH"): return -1, None
     m = int(col_name[2:])
     pm = 12 if m == 1 else m - 1
