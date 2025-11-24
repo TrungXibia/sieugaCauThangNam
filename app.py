@@ -82,7 +82,7 @@ def fetch_data(type_data='month'):
         return None
 
 # --- HÀM SO KHỚP ---
-def find_pattern_position(value, pattern):
+def find_pattern_position(value, pattern, allow_reverse=False):
     """
     Tìm vị trí của pattern trong value (quét từ trái sang phải).
     Returns: vị trí bắt đầu (0-indexed) hoặc -1 nếu không tìm thấy
@@ -91,12 +91,17 @@ def find_pattern_position(value, pattern):
     if not val_str or not pattern or len(pattern) != 2:
         return -1
     
+    # Tạo danh sách mẫu cần tìm
+    patterns_to_check = [pattern]
+    if allow_reverse and pattern[0] != pattern[1]:
+        patterns_to_check.append(pattern[::-1])
+    
     for i in range(len(val_str) - 1):
-        if val_str[i:i+2] == pattern:
+        if val_str[i:i+2] in patterns_to_check:
             return i
     return -1
 
-def matches_last_two_digits(value, pattern, exact=False, position=None):
+def matches_last_two_digits(value, pattern, exact=False, position=None, allow_reverse=False):
     """
     So khớp pattern với value.
     Args:
@@ -106,6 +111,7 @@ def matches_last_two_digits(value, pattern, exact=False, position=None):
             - True: Quét toàn bộ số từ trái sang phải, tìm 2 số liên tiếp khớp mẫu
             - False: Có chứa (Kép cần 1, Lệch cần 2)
         position: Vị trí cố định cần kiểm tra (0-indexed), chỉ dùng khi exact=True
+        allow_reverse: Cho phép tìm cả mẫu đảo ngược (ví dụ: 30 và 03)
     """
     val_str = str(value).strip()
     if not val_str or not pattern:
@@ -116,15 +122,20 @@ def matches_last_two_digits(value, pattern, exact=False, position=None):
         if len(pattern) != 2:
             return False
         
+        # Tạo danh sách mẫu cần tìm
+        patterns_to_check = [pattern]
+        if allow_reverse and pattern[0] != pattern[1]:  # Không đảo nếu là số kép (11, 22, ...)
+            patterns_to_check.append(pattern[::-1])  # Thêm mẫu đảo
+        
         # Nếu có position cố định, chỉ kiểm tra ở vị trí đó
         if position is not None:
             if position < 0 or position >= len(val_str) - 1:
                 return False
-            return val_str[position:position+2] == pattern
+            return val_str[position:position+2] in patterns_to_check
         
         # Nếu không có position, tìm ở bất kỳ đâu
         for i in range(len(val_str) - 1):
-            if val_str[i:i+2] == pattern:
+            if val_str[i:i+2] in patterns_to_check:
                 return True
         return False
     else:
@@ -189,7 +200,7 @@ def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
     patterns.reverse()
     return patterns, pattern_months
 
-def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month, target_step=None):
+def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month, target_step=None, allow_reverse=False):
     results = {}
     cau_positions = set()
     predict_positions = set()
@@ -227,17 +238,17 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                 if exact_match:
                                     # Với mẫu đầu tiên, tìm vị trí
                                     if k == 0:
-                                        fixed_position = find_pattern_position(val, patterns[k])
+                                        fixed_position = find_pattern_position(val, patterns[k], allow_reverse)
                                         if fixed_position == -1:
                                             ok = False
                                             break
                                     else:
                                         # Các mẫu tiếp theo phải ở cùng vị trí
-                                        if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position):
+                                        if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
                                             ok = False
                                             break
                                 else:
-                                    if not matches_last_two_digits(val, patterns[k], exact_match):
+                                    if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
                                         ok = False
                                         break
                                         
@@ -267,16 +278,16 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                 
                                 if exact_match:
                                     if k == 0:
-                                        fixed_position = find_pattern_position(val, patterns[k])
+                                        fixed_position = find_pattern_position(val, patterns[k], allow_reverse)
                                         if fixed_position == -1:
                                             ok = False
                                             break
                                     else:
-                                        if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position):
+                                        if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
                                             ok = False
                                             break
                                 else:
-                                    if not matches_last_two_digits(val, patterns[k], exact_match):
+                                    if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
                                         ok = False
                                         break
                                         
@@ -321,6 +332,8 @@ def main():
         st.session_state.exact_match_state = False
     if 'contains_both_state' not in st.session_state:
         st.session_state.contains_both_state = True
+    if 'allow_reverse_state' not in st.session_state:
+        st.session_state.allow_reverse_state = False
 
     def toggle_exact_match():
         if st.session_state.exact_match_state:
@@ -375,14 +388,19 @@ def main():
     st.sidebar.text("Kiểu so khớp:")
     st.sidebar.checkbox("Chính xác mẫu (cùng vị trí)", key='exact_match_state', on_change=toggle_exact_match)
     st.sidebar.checkbox("Có chứa (Kép cần 1, Lệch cần 2)", key='contains_both_state', on_change=toggle_contains_both)
+    st.sidebar.checkbox("🔄 Tìm đảo (30 ↔ 03)", key='allow_reverse_state')
     
     exact_match = st.session_state.exact_match_state
+    allow_reverse = st.session_state.allow_reverse_state
 
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
     patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
     st.sidebar.markdown("#### Mẫu hiện tại:")
     for i, p in enumerate(patterns):
-        st.sidebar.code(f"Mẫu {i+1}: {p}")
+        if allow_reverse and p and p[0] != p[1]:
+            st.sidebar.code(f"Mẫu {i+1}: {p} hoặc {p[::-1]}")
+        else:
+            st.sidebar.code(f"Mẫu {i+1}: {p}")
 
     # --- TABS REPLACEMENT (NAVIGATION) ---
     if 'active_tab' not in st.session_state:
@@ -434,7 +452,7 @@ def main():
         results, cau_pos, pred_pos = scan_cau(
             df, patterns, num_patterns, exact_match, 
             is_year_data, pattern_months, selected_month, 
-            target_step=target_step
+            target_step=target_step, allow_reverse=allow_reverse
         )
 
         highlight_target = st.session_state.get('highlight_target', None)
@@ -447,6 +465,8 @@ def main():
 
         if view_mode == "Highlight Cầu":
             match_text = "Cùng vị trí (2 số liên tiếp)" if exact_match else "Toàn bộ số (Kép cần 1, Lệch cần 2)"
+            if allow_reverse:
+                match_text += " + Tìm đảo"
             st.caption(f"Chế độ: {match_text} | {selected_step_label}")
             
             def highlight_cells(x):
@@ -468,7 +488,7 @@ def main():
                     for idx, val in col_data.items():
                         val_str = str(val)
                         for p_i in range(len(patterns)-1, -1, -1):
-                            if matches_last_two_digits(val_str, patterns[p_i], exact_match):
+                            if matches_last_two_digits(val_str, patterns[p_i], exact_match, None, allow_reverse):
                                 df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}; color: black'
                                 break
                 
@@ -516,7 +536,7 @@ def main():
         results, cau_pos, pred_pos = scan_cau(
             df, patterns, num_patterns, exact_match, 
             is_year_data, pattern_months, selected_month, 
-            target_step=target_step 
+            target_step=target_step, allow_reverse=allow_reverse
         )
 
         st.subheader(f"Thống kê: {selected_step_label}")
@@ -586,7 +606,7 @@ def main():
                 results, cau_pos, pred_pos = scan_cau(
                     df, patterns, num_patterns, exact_match, 
                     is_year_data, pattern_months, selected_month, 
-                    target_step=None
+                    target_step=None, allow_reverse=allow_reverse
                 )
 
                 data_check = []
@@ -617,4 +637,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
