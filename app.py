@@ -464,27 +464,6 @@ def main():
                 elif len(val) >= 2:
                     pred_pair = val[-2:]
                 
-                if pred_pair:
-                    predicted_numbers_filtered.add(pred_pair)
-                    if allow_reverse and pred_pair[0] != pred_pair[1]:
-                        predicted_numbers_filtered.add(pred_pair[::-1])
-        
-        # Hiển thị số dự đoán ở đầu
-        if predicted_numbers_filtered:
-            st.markdown(f"### 🎯 Số dự đoán tiếp theo ({selected_step_label}):")
-            sorted_predictions = sorted(list(predicted_numbers_filtered))
-            predictions_text = ', '.join(sorted_predictions)
-            st.text_area(
-                f"Tổng: {len(predicted_numbers_filtered)} số", 
-                value=predictions_text, 
-                height=100
-            )
-            st.markdown("---")
-
-        results, cau_pos, pred_pos = scan_cau(
-            df, patterns, num_patterns, exact_match, 
-            is_year_data, pattern_months, selected_month, 
-            target_step=target_step, allow_reverse=allow_reverse
         )
 
         highlight_target = st.session_state.get('highlight_target', None)
@@ -549,31 +528,6 @@ def main():
 
             st.dataframe(df.style.apply(highlight_cells, axis=None), height=600, use_container_width=True)
         else:
-            st.dataframe(df, height=600, use_container_width=True)
-
-    # --- TAB 2 ---
-    elif active_tab == "📈 Thống kê mức số":
-        step_options = ["Tất cả các cách"] + [f"Cách {i}" for i in range(6)]
-        current_idx = st.session_state.get('selected_step_index', 0)
-        selected_step_label = step_options[current_idx]
-        
-        target_step = None
-        if selected_step_label != "Tất cả các cách":
-            target_step = int(selected_step_label.split(" ")[1])
-
-        results, cau_pos, pred_pos = scan_cau(
-            df, patterns, num_patterns, exact_match, 
-            is_year_data, pattern_months, selected_month, 
-            target_step=target_step, allow_reverse=allow_reverse
-        )
-
-        st.subheader(f"Thống kê: {selected_step_label}")
-        
-        col_left, col_right = st.columns([1, 1])
-        final_pairs_bag = []
-        
-        with col_left:
-            st.markdown("#### Chi tiết từng cách")
             if not results:
                  st.info("Không tìm thấy cầu nào cho lựa chọn này.")
             
