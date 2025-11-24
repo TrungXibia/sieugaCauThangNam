@@ -235,7 +235,8 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                     result_vals.append({
                                         'value': pred_val,
                                         'predict_pos': (pred_idx, col),
-                                        'cau_pos': positions_temp
+                                        'cau_pos': positions_temp,
+                                        'match_position': fixed_position if exact_match else None
                                     })
                                     cau_positions.update(positions_temp)
                                     predict_positions.add((pred_idx, col))
@@ -274,7 +275,8 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                     result_vals.append({
                                         'value': pred_val,
                                         'predict_pos': (pred_idx, col),
-                                        'cau_pos': positions_temp
+                                        'cau_pos': positions_temp,
+                                        'match_position': fixed_position if exact_match else None
                                     })
                                     cau_positions.update(positions_temp)
                                     predict_positions.add((pred_idx, col))
@@ -282,10 +284,13 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
             pairs = []
             for item in result_vals:
                 val = item['value']
-                if len(val) >= 2: 
-                    digits = list(val)
-                    local_pairs = [a+b for a in digits for b in digits]
-                    pairs.extend(local_pairs)
+                pos = item.get('match_position')
+                # Nếu có vị trí khớp (chế độ chính xác), lấy 2 số tại vị trí đó
+                if pos is not None and 0 <= pos < len(val) - 1:
+                    pairs.append(val[pos:pos+2])
+                # Nếu không (chế độ thường), lấy 2 số cuối
+                elif len(val) >= 2: 
+                    pairs.append(val[-2:])
 
             results[key] = {
                 'count': count,
@@ -334,11 +339,29 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cấu hình tìm cầu")
     
-    current_day = datetime.now().day
+    # Lấy ngày và giờ hiện tại
+    current_datetime = datetime.now()
+    current_day = current_datetime.day
+    current_hour = current_datetime.hour
+    current_minute = current_datetime.minute
+    
     days = [str(i) for i in range(1, len(df) + 1)]
     
+    # Nếu sau 18h30, chọn ngày tiếp theo
+    if current_hour > 18 or (current_hour == 18 and current_minute >= 30):
+        default_day = current_day + 1
+    else:
+        default_day = current_day
+    
+    # Đảm bảo ngày mặc định không vượt quá số ngày có trong dữ liệu
+    if default_day > len(days):
+        default_day = len(days)
+    
+    # Tìm index của ngày mặc định
     default_index = len(days) - 1
-    if str(current_day) in days:
+    if str(default_day) in days:
+        default_index = days.index(str(default_day))
+    elif str(current_day) in days:
         default_index = days.index(str(current_day))
     
     selected_day = st.sidebar.selectbox("Chọn ngày", days, index=default_index)
@@ -427,16 +450,24 @@ def main():
             target_step=target_step, allow_reverse=allow_reverse
         )
         
-        # Lấy 2 số cuối từ kết quả theo cách đã chọn
+        # Lấy số dự đoán từ kết quả theo cách đã chọn
         predicted_numbers_filtered = set()
         for key, data in results_for_prediction.items():
             for item in data['items']:
                 val = item['value']
-                if len(val) >= 2:
-                    last_two = val[-2:]
-                    predicted_numbers_filtered.add(last_two)
-                    if allow_reverse and last_two[0] != last_two[1]:
-                        predicted_numbers_filtered.add(last_two[::-1])
+                pos = item.get('match_position')
+                
+                # Logic lấy số dự đoán
+                pred_pair = None
+                if pos is not None and 0 <= pos < len(val) - 1:
+                    pred_pair = val[pos:pos+2]
+                elif len(val) >= 2:
+                    pred_pair = val[-2:]
+                
+                if pred_pair:
+                    predicted_numbers_filtered.add(pred_pair)
+                    if allow_reverse and pred_pair[0] != pred_pair[1]:
+                        predicted_numbers_filtered.add(pred_pair[::-1])
         
         # Hiển thị số dự đoán ở đầu
         if predicted_numbers_filtered:
@@ -634,5 +665,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
