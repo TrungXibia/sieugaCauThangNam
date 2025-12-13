@@ -300,6 +300,177 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
 
     return results, cau_positions, predict_positions
 
+def scan_cau_horizontal(df, patterns, num_patterns, exact_match, is_year_data, pattern_months, selected_month, pattern_row_idx, target_step=None, allow_reverse=False):
+    """
+    Tìm cầu theo chiều ngang (trái/phải theo cột).
+    Cột chứa pattern (pattern source column) sẽ được loại trừ.
+    """
+    results = {}
+    cau_positions = set()
+    predict_positions = set()
+    
+    ignore_cols = ['Ngày']
+    
+    # Xác định cột pattern source để loại trừ
+    if is_year_data:
+        pattern_source_col = selected_month
+        search_cols = [c for c in df.columns if c not in pattern_months and c not in ignore_cols and c != selected_month]
+    else:
+        pattern_source_col = str(datetime.now().year)
+        search_cols = [c for c in df.columns if c != pattern_source_col and c not in ignore_cols]
+    
+    # Lấy index của các cột để tìm ngang
+    all_cols = [col for col in df.columns if col not in ignore_cols]
+    
+    directions = [("Trái sang phải (→)", True), ("Phải sang trái (←)", False)]
+
+    for step in range(6):
+        if target_step is not None and step != target_step:
+            continue
+
+        gap = step + 1
+        for dir_label, forward in directions:
+            count = 0
+            result_vals = []
+            key = f"{dir_label} - Cách {step}"
+            
+            # Duyệt qua từng hàng (ngày)
+            for row_idx in range(len(df)):
+                # Duyệt qua các cột
+                for col_start_idx in range(len(all_cols)):
+                    start_col = all_cols[col_start_idx]
+                    
+                    # Bỏ qua nếu bắt đầu từ cột pattern source
+                    if start_col == pattern_source_col:
+                        continue
+                    
+                    if forward:  # Trái sang phải
+                        if col_start_idx + (num_patterns - 1) * gap + gap >= len(all_cols):
+                            continue
+                        
+                        ok = True
+                        positions_temp = []
+                        fixed_position = None
+                        
+                        for k in range(num_patterns):
+                            col_idx = col_start_idx + k * gap
+                            if col_idx >= len(all_cols):
+                                ok = False
+                                break
+                            
+                            col = all_cols[col_idx]
+                            if col == pattern_source_col:
+                                ok = False
+                                break
+                                
+                            val = df.iloc[row_idx][col]
+                            
+                            if exact_match:
+                                if k == 0:
+                                    fixed_position = find_pattern_position(val, patterns[k], allow_reverse)
+                                    if fixed_position == -1:
+                                        ok = False
+                                        break
+                                else:
+                                    if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
+                                        ok = False
+                                        break
+                            else:
+                                if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
+                                    ok = False
+                                    break
+                                    
+                            positions_temp.append((row_idx, col))
+                        
+                        if ok:
+                            pred_col_idx = col_start_idx + (num_patterns - 1) * gap + gap
+                            if 0 <= pred_col_idx < len(all_cols):
+                                pred_col = all_cols[pred_col_idx]
+                                if pred_col != pattern_source_col:
+                                    pred_val = df.iloc[row_idx][pred_col]
+                                    if pred_val:
+                                        count += 1
+                                    result_vals.append({
+                                        'value': pred_val,
+                                        'predict_pos': (row_idx, pred_col),
+                                        'cau_pos': positions_temp,
+                                        'match_position': fixed_position if exact_match else None
+                                    })
+                                    cau_positions.update(positions_temp)
+                                    predict_positions.add((row_idx, pred_col))
+                    
+                    else:  # Phải sang trái
+                        if col_start_idx - (num_patterns - 1) * gap - gap < 0:
+                            continue
+                        
+                        ok = True
+                        positions_temp = []
+                        fixed_position = None
+                        
+                        for k in range(num_patterns):
+                            col_idx = col_start_idx - k * gap
+                            if col_idx < 0:
+                                ok = False
+                                break
+                            
+                            col = all_cols[col_idx]
+                            if col == pattern_source_col:
+                                ok = False
+                                break
+                                
+                            val = df.iloc[row_idx][col]
+                            
+                            if exact_match:
+                                if k == 0:
+                                    fixed_position = find_pattern_position(val, patterns[k], allow_reverse)
+                                    if fixed_position == -1:
+                                        ok = False
+                                        break
+                                else:
+                                    if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
+                                        ok = False
+                                        break
+                            else:
+                                if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
+                                    ok = False
+                                    break
+                                    
+                            positions_temp.append((row_idx, col))
+                            
+                        if ok:
+                            pred_col_idx = col_start_idx - (num_patterns - 1) * gap - gap
+                            if 0 <= pred_col_idx < len(all_cols):
+                                pred_col = all_cols[pred_col_idx]
+                                if pred_col != pattern_source_col:
+                                    pred_val = df.iloc[row_idx][pred_col]
+                                    if pred_val:
+                                        count += 1
+                                    result_vals.append({
+                                        'value': pred_val,
+                                        'predict_pos': (row_idx, pred_col),
+                                        'cau_pos': positions_temp,
+                                        'match_position': fixed_position if exact_match else None
+                                    })
+                                    cau_positions.update(positions_temp)
+                                    predict_positions.add((row_idx, pred_col))
+            
+            pairs = []
+            for item in result_vals:
+                val = item['value']
+                pos = item.get('match_position')
+                if pos is not None and 0 <= pos < len(val) - 1:
+                    pairs.append(val[pos:pos+2])
+                elif len(val) >= 2: 
+                    pairs.append(val[-2:])
+
+            results[key] = {
+                'count': count,
+                'items': result_vals,
+                'pairs': pairs
+            }
+
+    return results, cau_positions, predict_positions
+
 # =============================================================================
 # GIAO DIỆN CHÍNH
 # =============================================================================
@@ -383,6 +554,18 @@ def main():
     st.sidebar.checkbox("Có chứa (Kép cần 1, Lệch cần 2)", key='contains_both_state', on_change=toggle_contains_both)
     st.sidebar.checkbox("🔄 Tìm đảo (30 ↔ 03)", key='allow_reverse_state')
     
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Hướng tìm cầu:**")
+    if 'search_direction' not in st.session_state:
+        st.session_state.search_direction = "Lên Xuống"
+    search_direction = st.sidebar.radio(
+        "Hướng tìm", 
+        ["↕ Lên Xuống (theo ngày)", "↔ Trái Phải (theo cột)"],
+        key='search_direction_radio',
+        label_visibility="collapsed"
+    )
+    is_horizontal = "Trái Phải" in search_direction
+    
     exact_match = st.session_state.exact_match_state
     allow_reverse = st.session_state.allow_reverse_state
 
@@ -444,11 +627,18 @@ def main():
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
 
         # Tính toán số dự đoán theo cách đã chọn
-        results_for_prediction, _, _ = scan_cau(
-            df, patterns, num_patterns, exact_match, 
-            is_year_data, pattern_months, selected_month, 
-            target_step=target_step, allow_reverse=allow_reverse
-        )
+        if is_horizontal:
+            results_for_prediction, _, _ = scan_cau_horizontal(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, row_idx,
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+        else:
+            results_for_prediction, _, _ = scan_cau(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, 
+                target_step=target_step, allow_reverse=allow_reverse
+            )
         
         # Lấy số dự đoán từ kết quả theo cách đã chọn
         predicted_numbers_filtered = set()
@@ -476,11 +666,18 @@ def main():
             st.success(f"🎯 **Dự đoán ({selected_step_label}) - {len(predicted_numbers_filtered)} số:** {predictions_text}")
             st.markdown("---")
 
-        results, cau_pos, pred_pos = scan_cau(
-            df, patterns, num_patterns, exact_match, 
-            is_year_data, pattern_months, selected_month, 
-            target_step=target_step, allow_reverse=allow_reverse
-        )
+        if is_horizontal:
+            results, cau_pos, pred_pos = scan_cau_horizontal(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, row_idx,
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+        else:
+            results, cau_pos, pred_pos = scan_cau(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, 
+                target_step=target_step, allow_reverse=allow_reverse
+            )
 
         highlight_target = st.session_state.get('highlight_target', None)
         
@@ -556,11 +753,18 @@ def main():
         if selected_step_label != "Tất cả các cách":
             target_step = int(selected_step_label.split(" ")[1])
 
-        results, cau_pos, pred_pos = scan_cau(
-            df, patterns, num_patterns, exact_match, 
-            is_year_data, pattern_months, selected_month, 
-            target_step=target_step, allow_reverse=allow_reverse
-        )
+        if is_horizontal:
+            results, cau_pos, pred_pos = scan_cau_horizontal(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, row_idx,
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+        else:
+            results, cau_pos, pred_pos = scan_cau(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, 
+                target_step=target_step, allow_reverse=allow_reverse
+            )
 
         st.subheader(f"Thống kê: {selected_step_label}")
         
@@ -626,34 +830,45 @@ def main():
             if not check_num.isdigit() or len(check_num) != 2:
                 st.error("Vui lòng nhập 2 chữ số.")
             else:
-                results, cau_pos, pred_pos = scan_cau(
-                    df, patterns, num_patterns, exact_match, 
-                    is_year_data, pattern_months, selected_month, 
-                    target_step=None, allow_reverse=allow_reverse
-                )
+                if is_horizontal:
+                    results, cau_pos, pred_pos = scan_cau_horizontal(
+                        df, patterns, num_patterns, exact_match, 
+                        is_year_data, pattern_months, selected_month, row_idx,
+                        target_step=None, allow_reverse=allow_reverse
+                    )
+                    key_forward_template = "Trái sang phải (→) - Cách {}"
+                    key_backward_template = "Phải sang trái (←) - Cách {}"
+                else:
+                    results, cau_pos, pred_pos = scan_cau(
+                        df, patterns, num_patterns, exact_match, 
+                        is_year_data, pattern_months, selected_month, 
+                        target_step=None, allow_reverse=allow_reverse
+                    )
+                    key_forward_template = "Trên xuống (↓) - Cách {}"
+                    key_backward_template = "Dưới lên (↑) - Cách {}"
 
                 data_check = []
                 steps_to_check = range(6)
                 
                 for step in steps_to_check:
-                    key_down = f"Trên xuống (↓) - Cách {step}"
-                    count_down = 0
-                    if key_down in results:
-                        pairs = results[key_down]['pairs']
+                    key_forward = key_forward_template.format(step)
+                    count_forward = 0
+                    if key_forward in results:
+                        pairs = results[key_forward]['pairs']
                         c = Counter(pairs)
-                        count_down = c.get(check_num, 0)
+                        count_forward = c.get(check_num, 0)
                     
-                    key_up = f"Dưới lên (↑) - Cách {step}"
-                    count_up = 0
-                    if key_up in results:
-                        pairs = results[key_up]['pairs']
+                    key_backward = key_backward_template.format(step)
+                    count_backward = 0
+                    if key_backward in results:
+                        pairs = results[key_backward]['pairs']
                         c = Counter(pairs)
-                        count_up = c.get(check_num, 0)
+                        count_backward = c.get(check_num, 0)
                         
                     data_check.append({
                         "Cách": f"Cách {step}",
-                        "Mức (↓)": count_down,
-                        "Mức (↑)": count_up
+                        "Mức (→/↓)": count_forward,
+                        "Mức (←/↑)": count_backward
                     })
                 
                 st.table(pd.DataFrame(data_check))
