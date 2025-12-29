@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 from collections import Counter
+import itertools
 from io import StringIO
 
 # =============================================================================
@@ -27,6 +28,13 @@ PREDICT_COLOR = '#ff4b4b'
 # =============================================================================
 # HÀM XỬ LÝ DỮ LIỆU
 # =============================================================================
+
+
+def generate_digital_combinations(val_str, length):
+    """Tạo tất cả các số có độ dài 'length' từ các chữ số trong val_str."""
+    digits = sorted(list(set(filter(str.isdigit, str(val_str)))))
+    if not digits: return []
+    return [''.join(p) for p in itertools.product(digits, repeat=length)]
 
 def safe_int(val, default=0):
     try:
@@ -84,43 +92,57 @@ def fetch_data(type_data='month'):
 # --- HÀM SO KHỚP ---
 def find_pattern_position(value, pattern, allow_reverse=False):
     val_str = str(value).strip()
-    if not val_str or not pattern or len(pattern) != 2:
+    if not val_str or not pattern:
         return -1
     
+    pat_len = len(pattern)
     patterns_to_check = [pattern]
-    if allow_reverse and pattern[0] != pattern[1]:
+    if allow_reverse and pattern != pattern[::-1]:
         patterns_to_check.append(pattern[::-1])
     
-    for i in range(len(val_str) - 1):
-        if val_str[i:i+2] in patterns_to_check:
+    for i in range(len(val_str) - pat_len + 1):
+        if val_str[i:i+pat_len] in patterns_to_check:
             return i
     return -1
 
-def matches_last_two_digits(value, pattern, exact=False, position=None, allow_reverse=False):
+def matches_pattern_logic(value, pattern, exact=False, position=None, allow_reverse=False):
     val_str = str(value).strip()
     if not val_str or not pattern:
         return False
 
+    pat_len = len(pattern)
     if exact:
-        if len(pattern) != 2:
+        # Validate unique digit count: value must have at least as many unique digits as pattern
+        pattern_unique_count = len(set(pattern))
+        val_unique_count = len(set(val_str))
+        if val_unique_count < pattern_unique_count:
             return False
         
         patterns_to_check = [pattern]
-        if allow_reverse and pattern[0] != pattern[1]:
-            patterns_to_check.append(pattern[::-1])
+        if allow_reverse:
+            # Nếu là 3D (độ dài 3), lấy tất cả hoán vị (Tam hợp)
+            if len(pattern) == 3:
+                perms = [''.join(p) for p in itertools.permutations(pattern)]
+                patterns_to_check = list(set(perms))
+            elif pattern != pattern[::-1]:
+                patterns_to_check.append(pattern[::-1])
         
         if position is not None:
-            if position < 0 or position >= len(val_str) - 1:
-                return False
-            return val_str[position:position+2] in patterns_to_check
+            if isinstance(position, (list, tuple)):
+                match_val = "".join([val_str[i] for i in position if 0 <= i < len(val_str)])
+                if len(match_val) < pat_len: return False
+                return match_val in patterns_to_check
+            else:
+                if position < 0 or position >= len(val_str) - pat_len + 1:
+                    return False
+                return val_str[position:position+pat_len] in patterns_to_check
         
-        for i in range(len(val_str) - 1):
-            if val_str[i:i+2] in patterns_to_check:
+        for i in range(len(val_str) - pat_len + 1):
+            if val_str[i:i+pat_len] in patterns_to_check:
                 return True
         return False
     else:
-        if pattern[0] == pattern[1]:
-            return pattern[0] in val_str
+        # "Có chứa" logic: ensure all characters in pattern are present in value
         temp_val = val_str
         for char in pattern:
             if char in temp_val:
@@ -145,9 +167,10 @@ def get_prev_cell_year(df, row_idx, col_name):
             return r, pcol
     return -1, pcol
 
-def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
+def get_patterns(df, is_year_data, row_idx, col_name, num_patterns, is_3d=False):
     patterns = []
     pattern_months = set()
+    pat_len = 3 if is_3d else 2
     
     if is_year_data:
         cur_day, cur_col = row_idx, col_name
@@ -157,7 +180,7 @@ def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
                 patterns.append('')
             else:
                 val = df.iloc[p_day][p_col]
-                patterns.append(val[-2:] if len(val) >= 2 else '')
+                patterns.append(val[-pat_len:] if len(val) >= pat_len else '')
                 pattern_months.add(p_col)
                 cur_day, cur_col = p_day, p_col
     else:
@@ -167,7 +190,7 @@ def get_patterns(df, is_year_data, row_idx, col_name, num_patterns):
             idx = row_idx - i
             if idx >= 0:
                 val = df.iloc[idx][col_to_use]
-                patterns.append(val[-2:] if len(val) >= 2 else '')
+                patterns.append(val[-pat_len:] if len(val) >= pat_len else '')
             else:
                 patterns.append('')
                 
@@ -178,6 +201,9 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
     results = {}
     cau_positions = set()
     predict_positions = set()
+    
+    # Get pattern length from first pattern
+    pat_len = len(patterns[0]) if patterns and patterns[0] else 2
     
     ignore_cols = ['Ngày']
     if is_year_data:
@@ -197,7 +223,6 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
             count = 0
             result_vals = []
             key = f"{dir_label} - Cách {step}"
-            
             for col in search_cols:
                 for i in range(len(df)):
                     if inside: 
@@ -206,21 +231,30 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                             positions_temp = []
                             fixed_position = None
                             
-                            for k in range(num_patterns):
-                                val = df.iloc[i + k*gap][col]
+                            # Logic for Exact Match with Exhaustive Positions (Non-contiguous)
+                            if exact_match:
+                                first_val = str(df.iloc[i][col]).strip()
+                                index_combinations = list(itertools.combinations(range(len(first_val)), pat_len))
                                 
-                                if exact_match:
-                                    if k == 0:
-                                        fixed_position = find_pattern_position(val, patterns[k], allow_reverse)
-                                        if fixed_position == -1:
-                                            ok = False
+                                found_bridge = False
+                                for pos_tuple in index_combinations:
+                                    ok_tuple = True
+                                    for k in range(num_patterns):
+                                        val = str(df.iloc[i + k*gap][col]).strip()
+                                        if not matches_pattern_logic(val, patterns[k], exact=True, position=pos_tuple, allow_reverse=allow_reverse):
+                                            ok_tuple = False
                                             break
-                                    else:
-                                        if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
-                                            ok = False
-                                            break
-                                else:
-                                    if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
+                                    if ok_tuple:
+                                        fixed_position = pos_tuple
+                                        found_bridge = True
+                                        break
+                                if not found_bridge: ok = False
+                            
+                            for k in range(num_patterns):
+                                if not ok: break
+                                if not exact_match:
+                                    val = df.iloc[i + k*gap][col]
+                                    if not matches_pattern_logic(val, patterns[k], exact_match, None, allow_reverse):
                                         ok = False
                                         break
                                         
@@ -246,21 +280,29 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                             positions_temp = []
                             fixed_position = None
                             
-                            for k in range(num_patterns):
-                                val = df.iloc[i - k*gap][col]
+                            if exact_match:
+                                first_val = str(df.iloc[i][col]).strip()
+                                index_combinations = list(itertools.combinations(range(len(first_val)), pat_len))
                                 
-                                if exact_match:
-                                    if k == 0:
-                                        fixed_position = find_pattern_position(val, patterns[k], allow_reverse)
-                                        if fixed_position == -1:
-                                            ok = False
+                                found_bridge = False
+                                for pos_tuple in index_combinations:
+                                    ok_tuple = True
+                                    for k in range(num_patterns):
+                                        val = str(df.iloc[i - k*gap][col]).strip()
+                                        if not matches_pattern_logic(val, patterns[k], exact=True, position=pos_tuple, allow_reverse=allow_reverse):
+                                            ok_tuple = False
                                             break
-                                    else:
-                                        if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
-                                            ok = False
-                                            break
-                                else:
-                                    if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
+                                    if ok_tuple:
+                                        fixed_position = pos_tuple
+                                        found_bridge = True
+                                        break
+                                if not found_bridge: ok = False
+
+                            for k in range(num_patterns):
+                                if not ok: break
+                                if not exact_match:
+                                    val = df.iloc[i - k*gap][col]
+                                    if not matches_pattern_logic(val, patterns[k], exact_match, None, allow_reverse):
                                         ok = False
                                         break
                                         
@@ -282,15 +324,19 @@ def scan_cau(df, patterns, num_patterns, exact_match, is_year_data, pattern_mont
                                     predict_positions.add((pred_idx, col))
             
             pairs = []
+            pat_len = len(patterns[0]) if patterns and patterns[0] else 2
             for item in result_vals:
                 val = item['value']
                 pos = item.get('match_position')
-                # Nếu có vị trí khớp (chế độ chính xác), lấy 2 số tại vị trí đó
-                if pos is not None and 0 <= pos < len(val) - 1:
-                    pairs.append(val[pos:pos+2])
-                # Nếu không (chế độ thường), lấy 2 số cuối
-                elif len(val) >= 2: 
-                    pairs.append(val[-2:])
+                if pos is not None:
+                    if isinstance(pos, (list, tuple)):
+                        extracted = "".join([val[i] for i in pos if 0 <= i < len(val)])
+                        if len(extracted) == pat_len:
+                            pairs.append(extracted)
+                    elif 0 <= pos < len(val) - pat_len + 1:
+                        pairs.append(val[pos:pos+pat_len])
+                else:
+                    pairs.extend(generate_digital_combinations(val, pat_len))
 
             results[key] = {
                 'count': count,
@@ -308,6 +354,9 @@ def scan_cau_horizontal(df, patterns, num_patterns, exact_match, is_year_data, p
     results = {}
     cau_positions = set()
     predict_positions = set()
+    
+    # Get pattern length from first pattern
+    pat_len = len(patterns[0]) if patterns and patterns[0] else 2
     
     ignore_cols = ['Ngày']
     
@@ -372,11 +421,11 @@ def scan_cau_horizontal(df, patterns, num_patterns, exact_match, is_year_data, p
                                         ok = False
                                         break
                                 else:
-                                    if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
+                                    if not matches_pattern_logic(val, patterns[k], exact_match, fixed_position, allow_reverse):
                                         ok = False
                                         break
                             else:
-                                if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
+                                if not matches_pattern_logic(val, patterns[k], exact_match, None, allow_reverse):
                                     ok = False
                                     break
                                     
@@ -427,11 +476,11 @@ def scan_cau_horizontal(df, patterns, num_patterns, exact_match, is_year_data, p
                                         ok = False
                                         break
                                 else:
-                                    if not matches_last_two_digits(val, patterns[k], exact_match, fixed_position, allow_reverse):
+                                    if not matches_pattern_logic(val, patterns[k], exact_match, fixed_position, allow_reverse):
                                         ok = False
                                         break
                             else:
-                                if not matches_last_two_digits(val, patterns[k], exact_match, None, allow_reverse):
+                                if not matches_pattern_logic(val, patterns[k], exact_match, None, allow_reverse):
                                     ok = False
                                     break
                                     
@@ -455,13 +504,19 @@ def scan_cau_horizontal(df, patterns, num_patterns, exact_match, is_year_data, p
                                     predict_positions.add((row_idx, pred_col))
             
             pairs = []
+            pat_len = len(patterns[0]) if patterns and patterns[0] else 2
             for item in result_vals:
                 val = item['value']
                 pos = item.get('match_position')
-                if pos is not None and 0 <= pos < len(val) - 1:
-                    pairs.append(val[pos:pos+2])
-                elif len(val) >= 2: 
-                    pairs.append(val[-2:])
+                if pos is not None:
+                    if isinstance(pos, (list, tuple)):
+                        extracted = "".join([val[i] for i in pos if 0 <= i < len(val)])
+                        if len(extracted) == pat_len:
+                            pairs.append(extracted)
+                    elif 0 <= pos < len(val) - pat_len + 1:
+                        pairs.append(val[pos:pos+pat_len])
+                else:
+                    pairs.extend(generate_digital_combinations(val, pat_len))
 
             results[key] = {
                 'count': count,
@@ -553,6 +608,7 @@ def main():
     st.sidebar.checkbox("Chính xác mẫu (cùng vị trí)", key='exact_match_state', on_change=toggle_exact_match)
     st.sidebar.checkbox("Có chứa (Kép cần 1, Lệch cần 2)", key='contains_both_state', on_change=toggle_contains_both)
     st.sidebar.checkbox("🔄 Tìm đảo (30 ↔ 03)", key='allow_reverse_state')
+    st.sidebar.checkbox("🎯 Chế độ 3D (Tìm 3 số)", key='is_3d_state')
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Hướng tìm cầu:**")
@@ -571,12 +627,26 @@ def main():
     allow_reverse = st.session_state.allow_reverse_state
 
     col_pattern_source = selected_month if is_year_data else str(datetime.now().year)
-    patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns)
+    is_3d = st.session_state.get('is_3d_state', False)
+    patterns, pattern_months = get_patterns(df, is_year_data, row_idx, col_pattern_source, num_patterns, is_3d=is_3d)
     
     st.sidebar.markdown("#### Mẫu hiện tại:")
     for i, p in enumerate(patterns):
-        if allow_reverse and p and p[0] != p[1]:
-            st.sidebar.code(f"Mẫu {i+1}: {p} hoặc {p[::-1]}")
+        if allow_reverse and p:
+            if len(p) == 3:
+                p_set = sorted(list(set(p)))
+                perms = sorted(list(set([''.join(perm) for perm in itertools.product(p_set, repeat=len(p))])))
+                # perms_actual = sorted(list(set([''.join(perm) for perm in itertools.product(p_set, repeat=len(p))])))
+
+                if p in perms: perms.remove(p)
+                if perms:
+                    st.sidebar.code(f"Mẫu {i+1}: {p} hoặc {', '.join(perms)}")
+                else:
+                    st.sidebar.code(f"Mẫu {i+1}: {p}")
+            elif p != p[::-1]:
+                st.sidebar.code(f"Mẫu {i+1}: {p} hoặc {p[::-1]}")
+            else:
+                st.sidebar.code(f"Mẫu {i+1}: {p}")
         else:
             st.sidebar.code(f"Mẫu {i+1}: {p}")
 
@@ -657,21 +727,16 @@ def main():
         # Lấy số dự đoán từ kết quả theo cách đã chọn
         predicted_numbers_filtered = set()
         for key, data in results_for_prediction.items():
-            for item in data['items']:
-                val = item['value']
-                pos = item.get('match_position')
-                
-                # Logic lấy số dự đoán
-                pred_pair = None
-                if pos is not None and 0 <= pos < len(val) - 1:
-                    pred_pair = val[pos:pos+2]
-                elif len(val) >= 2:
-                    pred_pair = val[-2:]
-                
-                if pred_pair:
-                    predicted_numbers_filtered.add(pred_pair)
-                    if allow_reverse and pred_pair[0] != pred_pair[1]:
-                        predicted_numbers_filtered.add(pred_pair[::-1])
+            for p in data.get('pairs', []):
+                if p:
+                    predicted_numbers_filtered.add(p)
+                    if allow_reverse:
+                        if len(p) == 3:
+                            perms = [''.join(perm) for perm in itertools.permutations(p)]
+                            for perm in perms:
+                                predicted_numbers_filtered.add(perm)
+                        elif p != p[::-1]:
+                            predicted_numbers_filtered.add(p[::-1])
 
         # Hiển thị số dự đoán ở đầu
         if predicted_numbers_filtered:
@@ -733,15 +798,8 @@ def main():
                     
                     return df_css
 
-                for col in x.columns:
-                    if col == 'Ngày': continue
-                    col_data = x[col]
-                    for idx, val in col_data.items():
-                        val_str = str(val)
-                        for p_i in range(len(patterns)-1, -1, -1):
-                            if matches_last_two_digits(val_str, patterns[p_i], exact_match, None, allow_reverse):
-                                df_css.at[idx, col] = f'background-color: {COLORS[p_i % len(COLORS)]}; color: black'
-                                break
+                # Pattern highlights - REMOVED to reduce noise
+                pass
                 
                 if is_year_data:
                     cur_d, cur_c = row_idx, selected_month
@@ -851,7 +909,8 @@ def main():
             else:
                 st.info("Chưa có số liệu.")
 
-            all_possible = set(f"{i:02d}" for i in range(100))
+            is_3d = st.session_state.get('is_3d_state', False)
+            all_possible = set(f"{i:03d}" if is_3d else f"{i:02d}" for i in (range(1000) if is_3d else range(100)))
             found_numbers = set(final_pairs_bag) if final_pairs_bag else set()
             missing_numbers = sorted(list(all_possible - found_numbers))
             
@@ -866,11 +925,14 @@ def main():
     # --- TAB 3 ---
     elif active_tab == "🔍 Kiểm tra số":
         st.subheader("Kiểm tra mức độ xuất hiện của một số")
-        check_num = st.text_input("Nhập số (2 chữ số):", max_chars=2)
+        is_3d = st.session_state.get('is_3d_state', False)
+        expected_len = 3 if is_3d else 2
+        check_num = st.text_input(f"Nhập số ({expected_len} chữ số):", max_chars=expected_len)
         
         if st.button("Kiểm tra") and check_num:
-            if not check_num.isdigit() or len(check_num) != 2:
-                st.error("Vui lòng nhập 2 chữ số.")
+            expected_len = 3 if st.session_state.get('is_3d_state', False) else 2
+            if not check_num.isdigit() or len(check_num) != expected_len:
+                st.error(f"Vui lòng nhập {expected_len} chữ số.")
             else:
                 if is_both:
                     res_v, cp_v, pp_v = scan_cau(
