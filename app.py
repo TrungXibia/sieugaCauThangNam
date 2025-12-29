@@ -560,11 +560,12 @@ def main():
         st.session_state.search_direction = "Lên Xuống"
     search_direction = st.sidebar.radio(
         "Hướng tìm", 
-        ["↕ Lên Xuống (theo ngày)", "↔ Trái Phải (theo cột)"],
+        ["↕ Lên Xuống (theo ngày)", "↔ Trái Phải (theo cột)", "↕↔ Cả hai (Cùng lúc)"],
         key='search_direction_radio',
         label_visibility="collapsed"
     )
     is_horizontal = "Trái Phải" in search_direction
+    is_both = "Cả hai" in search_direction
     
     exact_match = st.session_state.exact_match_state
     allow_reverse = st.session_state.allow_reverse_state
@@ -627,7 +628,20 @@ def main():
             view_mode = st.selectbox("Chế độ xem", ["Highlight Cầu", "Dữ liệu gốc"])
 
         # Tính toán số dự đoán theo cách đã chọn
-        if is_horizontal:
+        if is_both:
+            res_v, cp_v, pp_v = scan_cau(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, 
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+            res_h, cp_h, pp_h = scan_cau_horizontal(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, row_idx,
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+            results_for_prediction = {**res_v, **res_h}
+            # Note: cau_pos and pred_pos are not used here for calculation, but for consistency if needed later
+        elif is_horizontal:
             results_for_prediction, _, _ = scan_cau_horizontal(
                 df, patterns, num_patterns, exact_match, 
                 is_year_data, pattern_months, selected_month, row_idx,
@@ -666,7 +680,21 @@ def main():
             st.success(f"🎯 **Dự đoán ({selected_step_label}) - {len(predicted_numbers_filtered)} số:** {predictions_text}")
             st.markdown("---")
 
-        if is_horizontal:
+        if is_both:
+            res_v, cp_v, pp_v = scan_cau(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, 
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+            res_h, cp_h, pp_h = scan_cau_horizontal(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, row_idx,
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+            results = {**res_v, **res_h}
+            cau_pos = cp_v.union(cp_h)
+            pred_pos = pp_v.union(pp_h)
+        elif is_horizontal:
             results, cau_pos, pred_pos = scan_cau_horizontal(
                 df, patterns, num_patterns, exact_match, 
                 is_year_data, pattern_months, selected_month, row_idx,
@@ -753,7 +781,21 @@ def main():
         if selected_step_label != "Tất cả các cách":
             target_step = int(selected_step_label.split(" ")[1])
 
-        if is_horizontal:
+        if is_both:
+            res_v, cp_v, pp_v = scan_cau(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, 
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+            res_h, cp_h, pp_h = scan_cau_horizontal(
+                df, patterns, num_patterns, exact_match, 
+                is_year_data, pattern_months, selected_month, row_idx,
+                target_step=target_step, allow_reverse=allow_reverse
+            )
+            results = {**res_v, **res_h}
+            cau_pos = cp_v.union(cp_h)
+            pred_pos = pp_v.union(pp_h)
+        elif is_horizontal:
             results, cau_pos, pred_pos = scan_cau_horizontal(
                 df, patterns, num_patterns, exact_match, 
                 is_year_data, pattern_months, selected_month, row_idx,
@@ -830,7 +872,24 @@ def main():
             if not check_num.isdigit() or len(check_num) != 2:
                 st.error("Vui lòng nhập 2 chữ số.")
             else:
-                if is_horizontal:
+                if is_both:
+                    res_v, cp_v, pp_v = scan_cau(
+                        df, patterns, num_patterns, exact_match, 
+                        is_year_data, pattern_months, selected_month, 
+                        target_step=None, allow_reverse=allow_reverse
+                    )
+                    res_h, cp_h, pp_h = scan_cau_horizontal(
+                        df, patterns, num_patterns, exact_match, 
+                        is_year_data, pattern_months, selected_month, row_idx,
+                        target_step=None, allow_reverse=allow_reverse
+                    )
+                    results = {**res_v, **res_h}
+                    # Templates are tricky here, we'll use a combined approach below
+                    key_v_forward = "Trên xuống (↓) - Cách {}"
+                    key_v_backward = "Dưới lên (↑) - Cách {}"
+                    key_h_forward = "Trái sang phải (→) - Cách {}"
+                    key_h_backward = "Phải sang trái (←) - Cách {}"
+                elif is_horizontal:
                     results, cau_pos, pred_pos = scan_cau_horizontal(
                         df, patterns, num_patterns, exact_match, 
                         is_year_data, pattern_months, selected_month, row_idx,
@@ -851,19 +910,29 @@ def main():
                 steps_to_check = range(6)
                 
                 for step in steps_to_check:
-                    key_forward = key_forward_template.format(step)
-                    count_forward = 0
-                    if key_forward in results:
-                        pairs = results[key_forward]['pairs']
-                        c = Counter(pairs)
-                        count_forward = c.get(check_num, 0)
-                    
-                    key_backward = key_backward_template.format(step)
-                    count_backward = 0
-                    if key_backward in results:
-                        pairs = results[key_backward]['pairs']
-                        c = Counter(pairs)
-                        count_backward = c.get(check_num, 0)
+                    if is_both:
+                        # Combine counts from both directions
+                        c_vf = Counter(results.get(key_v_forward.format(step), {}).get('pairs', []))
+                        c_vb = Counter(results.get(key_v_backward.format(step), {}).get('pairs', []))
+                        c_hf = Counter(results.get(key_h_forward.format(step), {}).get('pairs', []))
+                        c_hb = Counter(results.get(key_h_backward.format(step), {}).get('pairs', []))
+                        
+                        count_forward = c_vf.get(check_num, 0) + c_hf.get(check_num, 0)
+                        count_backward = c_vb.get(check_num, 0) + c_hb.get(check_num, 0)
+                    else:
+                        key_forward = key_forward_template.format(step)
+                        count_forward = 0
+                        if key_forward in results:
+                            pairs = results[key_forward]['pairs']
+                            c = Counter(pairs)
+                            count_forward = c.get(check_num, 0)
+                        
+                        key_backward = key_backward_template.format(step)
+                        count_backward = 0
+                        if key_backward in results:
+                            pairs = results[key_backward]['pairs']
+                            c = Counter(pairs)
+                            count_backward = c.get(check_num, 0)
                         
                     data_check.append({
                         "Cách": f"Cách {step}",
